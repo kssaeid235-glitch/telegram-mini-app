@@ -1,7 +1,10 @@
 'use strict';
 
-/* ============ CONSTANTS ============ */
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
 const ADMIN_NUMERIC_ID = 9260106248;
+const ADMIN_NUMERIC_ID_STR = "9260106248";
 const BOT_1_USERNAME = 'Viral_Video_app_bot';
 const BOT_2_USERNAME = 'FileStoragebdbot';
 const STORAGE_CHANNEL_ID = -1005626980298;
@@ -11,12 +14,16 @@ const DEFAULT_FAKE_USERS = '10,000+';
 const DEFAULT_COINS_PER_AD = 10;
 const DEFAULT_UNLOCK_COINS = 500;
 const DEFAULT_AUTO_DELETE_MINUTES = 30;
+const DEFAULT_AD_COUNT = 3;
+const DEFAULT_INTER_AD_DELAY_SECONDS = 5;
 
 const STORAGE_KEY = 'vva_state_v1';
 const COIN_STORE_KEY = 'vva_coins_v1';
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 
-/* ============ FIREBASE CONFIG (paste your keys here) ============ */
+/* ================================================================
+   FIREBASE CONFIG
+   ================================================================ */
 const firebaseConfig = {
   apiKey: "",
   authDomain: "",
@@ -26,15 +33,17 @@ const firebaseConfig = {
   appId: ""
 };
 
-let fbApp = null, fbDb = null, fbReady = false, fbAuth = null;
+let fbApp = null, fbDb = null, fbAuth = null, fbReady = false;
 
-/* ============ DEFAULT STATE ============ */
+/* ================================================================
+   DEFAULT STATE
+   ================================================================ */
 const DEFAULT_STATE = {
   videos: [
-    { id: 'v_demo_1', title: 'অসাধারণ ট্রিকস ভিডিও — অবাক হয়ে যাবেন!', category: 'মজার', views: 12450, thumbnail: '', messageLink: 'https://t.me/private_channel/12', messageId: 12 },
-    { id: 'v_demo_2', title: 'মোবাইল দিয়ে এই ৫টি কাজ শিখুন — জীবন বদলে যাবে', category: 'শিক্ষা', views: 8720, thumbnail: '', messageLink: 'https://t.me/private_channel/15', messageId: 15 },
-    { id: 'v_demo_3', title: 'TOP 10 গেমিং হাইলাইটস — মিস করবেন না!', category: 'গেমিং', views: 32100, thumbnail: '', messageLink: 'https://t.me/private_channel/21', messageId: 21 },
-    { id: 'v_demo_4', title: 'প্রিমিয়াম মোটিভেশন ভিডিও — আজই দেখুন', category: 'বিনোদন', views: 5890, thumbnail: '', messageLink: 'https://t.me/private_channel/27', messageId: 27 }
+    { id: 'v_demo_1', title: 'অসাধারণ ট্রিকস ভিডিও — অবাক হয়ে যাবেন!', category: 'মজার', views: 12450, thumbnail: '', messageLink: 'https://t.me/private_channel/12', messageId: 12, adCount: null },
+    { id: 'v_demo_2', title: 'মোবাইল দিয়ে এই ৫টি কাজ শিখুন — জীবন বদলে যাবে', category: 'শিক্ষা', views: 8720, thumbnail: '', messageLink: 'https://t.me/private_channel/15', messageId: 15, adCount: null },
+    { id: 'v_demo_3', title: 'TOP 10 গেমিং হাইলাইটস — মিস করবেন না!', category: 'গেমিং', views: 32100, thumbnail: '', messageLink: 'https://t.me/private_channel/21', messageId: 21, adCount: null },
+    { id: 'v_demo_4', title: 'প্রিমিয়াম মোটিভেশন ভিডিও — আজই দেখুন', category: 'বিনোদন', views: 5890, thumbnail: '', messageLink: 'https://t.me/private_channel/27', messageId: 27, adCount: null }
   ],
   categories: ['সব', 'মজার', 'শিক্ষা', 'বিনোদন', 'টেক', 'গেমিং'],
   settings: {
@@ -42,7 +51,9 @@ const DEFAULT_STATE = {
     coinsPerAd: DEFAULT_COINS_PER_AD,
     unlockCoins: DEFAULT_UNLOCK_COINS,
     autoDeleteMinutes: DEFAULT_AUTO_DELETE_MINUTES,
-    adSteps: 3, adsPerStep: 1,
+    defaultAdCount: DEFAULT_AD_COUNT,
+    interAdDelaySeconds: DEFAULT_INTER_AD_DELAY_SECONDS,
+    adMode: 'sequential',
     channelLink: 'https://t.me/Viral_Video_app_bot',
     channelTitle: 'Viral Video Official',
     channelDesc: 'প্রতিদিন নতুন এক্সক্লুসিভ ভিডিও পেতে আমাদের চ্যানেলে জয়েন করুন।',
@@ -63,7 +74,9 @@ const DEFAULT_STATE = {
   analytics: { totalAdsWatched: 0, totalUnlocks: 0, totalVideosViewed: 0 }
 };
 
-/* ============ GLOBAL ============ */
+/* ================================================================
+   GLOBAL STATE
+   ================================================================ */
 let state = null;
 let coinsMap = {};
 let currentUser = null;
@@ -73,7 +86,60 @@ let localAdminPreview = false;
 
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
-/* ============ FIREBASE INIT ============ */
+/* ================================================================
+   ID NORMALIZATION + ADMIN CHECK
+   ================================================================ */
+function normalizeId(v) {
+  if (v === null || v === undefined) return '';
+  return String(v).trim();
+}
+
+function isAdminUser(u) {
+  if (!u) return false;
+  return normalizeId(u.id) === ADMIN_NUMERIC_ID_STR;
+}
+
+function isAdmin() {
+  return isAdminUser(currentUser);
+}
+
+function isInTelegram() {
+  return !!(currentUser && currentUser.inTelegram === true);
+}
+
+function canSeeAdmin() {
+  if (isAdminUser(currentUser)) return true;
+  if (!isInTelegram() && localAdminPreview) return true;
+  return false;
+}
+
+function refreshUserFromTelegram() {
+  if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
+  const u = tg.initDataUnsafe.user;
+  if (!u) return;
+  const uid = u.id;
+  if (uid === null || uid === undefined) return;
+  currentUser = {
+    id: uid,
+    first_name: u.first_name || '',
+    last_name: u.last_name || '',
+    username: u.username || '',
+    photo_url: u.photo_url || '',
+    inTelegram: true
+  };
+}
+
+function isBanned() {
+  if (!state || !currentUser) return false;
+  return state.bannedUsers.some(b => normalizeId(b) === normalizeId(currentUser.id));
+}
+
+function getUserCoins() { return Number(coinsMap[currentUser.id] || 0); }
+function setUserCoins(v) { coinsMap[currentUser.id] = Math.max(0, Math.floor(v)); saveCoins(); }
+
+/* ================================================================
+   FIREBASE INIT
+   ================================================================ */
 async function initFirebase() {
   if (!firebaseConfig.apiKey || !firebaseConfig.projectId) return false;
   try {
@@ -83,7 +149,6 @@ async function initFirebase() {
     try { await fbAuth.signInAnonymously(); } catch (e) { console.warn('Anon auth failed', e); }
     await fbDb.collection('state').doc('global').get({ source: 'server' });
     fbReady = true;
-    console.log('[Firebase] Ready');
     return true;
   } catch (e) {
     console.warn('[Firebase] init failed, using localStorage fallback', e);
@@ -91,7 +156,9 @@ async function initFirebase() {
   }
 }
 
-/* ============ STATE LOAD/SAVE ============ */
+/* ================================================================
+   STATE LOAD / SAVE
+   ================================================================ */
 function mergeState(remote) {
   if (!remote || typeof remote !== 'object') return structuredClone(DEFAULT_STATE);
   const merged = { ...DEFAULT_STATE, ...remote };
@@ -102,6 +169,7 @@ function mergeState(remote) {
   if (!Array.isArray(merged.categories)) merged.categories = structuredClone(DEFAULT_STATE.categories);
   if (!Array.isArray(merged.rewards)) merged.rewards = [];
   if (!Array.isArray(merged.bannedUsers)) merged.bannedUsers = [];
+  merged.videos = merged.videos.map(v => ({ adCount: null, ...v }));
   return merged;
 }
 
@@ -147,37 +215,38 @@ function saveCoins() {
   }
 }
 
-/* ============ TELEGRAM ============ */
+/* ================================================================
+   TELEGRAM INIT
+   ================================================================ */
 function initTelegram() {
   if (tg) {
-    try { tg.ready(); tg.expand(); if (tg.setHeaderColor) tg.setHeaderColor('#07070d'); if (tg.setBackgroundColor) tg.setBackgroundColor('#07070d'); }
-    catch (e) {}
+    try {
+      tg.ready();
+      tg.expand();
+      if (tg.setHeaderColor) tg.setHeaderColor('#07070d');
+      if (tg.setBackgroundColor) tg.setBackgroundColor('#07070d');
+    } catch (e) {}
   }
-  const unsafe = tg && tg.initDataUnsafe ? tg.initDataUnsafe : null;
-  if (unsafe && unsafe.user && unsafe.user.id) {
+  refreshUserFromTelegram();
+  if (!currentUser) {
     currentUser = {
-      id: unsafe.user.id,
-      first_name: unsafe.user.first_name || '',
-      last_name: unsafe.user.last_name || '',
-      username: unsafe.user.username || '',
-      photo_url: unsafe.user.photo_url || '',
-      inTelegram: true
+      id: 100000001,
+      first_name: 'Preview',
+      last_name: 'User',
+      username: 'preview_user',
+      photo_url: '',
+      inTelegram: false
     };
-  } else {
-    currentUser = { id: 100000001, first_name: 'Preview', last_name: 'User', username: 'preview_user', photo_url: '', inTelegram: false };
   }
 }
 
-function isInTelegram() { return !!(currentUser && currentUser.inTelegram); }
-function isAdmin() { return currentUser && currentUser.id === ADMIN_NUMERIC_ID; }
-function canSeeAdmin() { if (isAdmin()) return true; if (!isInTelegram() && localAdminPreview) return true; return false; }
-function isBanned() { return state && state.bannedUsers.includes(currentUser.id); }
-function getUserCoins() { return Number(coinsMap[currentUser.id] || 0); }
-function setUserCoins(v) { coinsMap[currentUser.id] = Math.max(0, Math.floor(v)); saveCoins(); }
-
-/* ============ UTILITIES ============ */
+/* ================================================================
+   UTILITIES
+   ================================================================ */
 function esc(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function formatViews(n) {
   n = Number(n) || 0;
@@ -228,23 +297,6 @@ function attachRipple() {
   }, true);
 }
 
-/* ============ TOKEN CREATION ============ */
-async function createUnlockToken(userId, videoId) {
-  const token = generateSecureToken();
-  if (fbReady) {
-    try {
-      await fbDb.collection('unlock_tokens').doc(token).set({
-        user_id: userId,
-        video_id: videoId,
-        used: false,
-        created_at: firebase.firestore.FieldValue.serverTimestamp(),
-        expires_at: firebase.firestore.Timestamp.fromDate(new Date(Date.now() + TOKEN_TTL_MS))
-      });
-    } catch (e) { console.warn('Token create failed', e); }
-  }
-  return token;
-}
-
 function parseMessageId(raw) {
   if (!raw) return 0;
   const s = String(raw).trim();
@@ -254,19 +306,58 @@ function parseMessageId(raw) {
   return 0;
 }
 
-/* ============ NAVIGATION ============ */
+function getVideoAdCount(v) {
+  const vc = Number(v && v.adCount);
+  if (Number.isFinite(vc) && vc > 0) return Math.floor(vc);
+  const dc = Number(state.settings.defaultAdCount);
+  if (Number.isFinite(dc) && dc > 0) return Math.floor(dc);
+  return DEFAULT_AD_COUNT;
+}
+
+function getInterAdDelaySeconds() {
+  const n = Number(state.settings.interAdDelaySeconds);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return DEFAULT_INTER_AD_DELAY_SECONDS;
+}
+
+/* ================================================================
+   TOKEN CREATION
+   ================================================================ */
+async function createUnlockToken(userId, videoId, messageId) {
+  const token = generateSecureToken();
+  if (fbReady) {
+    try {
+      await fbDb.collection('unlock_tokens').doc(token).set({
+        user_id: userId,
+        video_id: videoId,
+        message_id: messageId || 0,
+        used: false,
+        created_at: firebase.firestore.FieldValue.serverTimestamp(),
+        expires_at: firebase.firestore.Timestamp.fromDate(new Date(Date.now() + TOKEN_TTL_MS))
+      });
+    } catch (e) { console.warn('Token create failed', e); }
+  }
+  return token;
+}
+
+/* ================================================================
+   NAVIGATION
+   ================================================================ */
 function switchTab(name) {
   if (!['home', 'reward', 'channel', 'settings'].includes(name)) return;
   currentTab = name;
   document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('active', p.dataset.tab === name));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
+  if (name === 'settings') refreshUserFromTelegram();
   if (name === 'home') renderHome();
   if (name === 'reward') renderReward();
   if (name === 'channel') renderChannel();
   if (name === 'settings') renderSettings();
 }
 
-/* ============ HEADER ============ */
+/* ================================================================
+   HEADER
+   ================================================================ */
 function renderHeader() {
   const name = [currentUser.first_name, currentUser.last_name].filter(Boolean).join(' ') || 'Guest';
   document.getElementById('headerName').textContent = name;
@@ -281,21 +372,26 @@ function renderHeader() {
   document.getElementById('navLabelSettings').textContent = L.settings;
 }
 
-/* ============ HOME ============ */
+/* ================================================================
+   HOME
+   ================================================================ */
 function renderHome() {
   const page = document.getElementById('page-home');
-  const cats = state.categories;
-  const catsHTML = cats.map(c => `<button class="cat-pill ripple ${c === activeCategory ? 'active' : ''}" data-cat="${esc(c)}" type="button">${esc(c)}</button>`).join('');
+  const catsHTML = state.categories.map(c =>
+    `<button class="cat-pill ripple ${c === activeCategory ? 'active' : ''}" data-cat="${esc(c)}" type="button">${esc(c)}</button>`
+  ).join('');
   const list = state.videos.filter(v => activeCategory === 'সব' || v.category === activeCategory);
   const L = state.settings.buttonLabels;
   const videosHTML = list.length === 0
     ? `<div class="empty-state"><div class="empty-ico">🎬</div><div>এই ক্যাটাগরিতে এখনো কোন ভিডিও নেই</div></div>`
     : list.map(v => {
       const thumb = v.thumbnail ? `<img src="${esc(v.thumbnail)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
+      const adTotal = getVideoAdCount(v);
       return `<div class="video-card neon-card ripple" data-video-id="${esc(v.id)}">
         <div class="video-thumb">
           <div class="thumb-fallback">🎬</div>${thumb}
           <div class="video-badge">${esc(v.category)}</div>
+          <div class="video-badge-ad">🎬 ${adTotal} অ্যাড</div>
           <div class="thumb-play"><div class="thumb-play-btn">▶</div></div>
         </div>
         <div class="video-info">
@@ -316,7 +412,9 @@ function renderHome() {
   page.querySelectorAll('.video-card').forEach(card => card.addEventListener('click', () => openVideoModal(card.dataset.videoId)));
 }
 
-/* ============ REWARD ============ */
+/* ================================================================
+   REWARD
+   ================================================================ */
 function renderReward() {
   const page = document.getElementById('page-reward');
   const L = state.settings.buttonLabels;
@@ -354,7 +452,10 @@ function renderReward() {
     <div class="reward-section-title">রিওয়ার্ড আইটেম</div>
     <div class="reward-list">${rewardsHTML}</div>`;
   document.getElementById('btnEarnCoins').addEventListener('click', openEarnCoinsModal);
-  page.querySelectorAll('[data-reward-action="unlock"]').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); handleRewardUnlock(btn.dataset.rewardId); }));
+  page.querySelectorAll('[data-reward-action="unlock"]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleRewardUnlock(btn.dataset.rewardId);
+  }));
 }
 
 async function handleRewardUnlock(rewardId) {
@@ -388,7 +489,9 @@ function openRewardChannelModal(reward) {
   });
 }
 
-/* ============ CHANNEL ============ */
+/* ================================================================
+   CHANNEL
+   ================================================================ */
 function renderChannel() {
   const page = document.getElementById('page-channel');
   const L = state.settings.buttonLabels;
@@ -404,28 +507,36 @@ function renderChannel() {
   document.getElementById('btnJoinChannel').addEventListener('click', () => openTelegramLink(s.channelLink));
 }
 
-/* ============ SETTINGS ============ */
+/* ================================================================
+   SETTINGS
+   ================================================================ */
 function renderSettings() {
+  refreshUserFromTelegram();
   const page = document.getElementById('page-settings');
   const L = state.settings.buttonLabels;
   const coins = getUserCoins();
   const fakeUsers = state.settings.fakeUsers;
-  const adminHTML = canSeeAdmin() ? `
+
+  const canSee = canSeeAdmin();
+  const adminHTML = canSee ? `
     <div class="utility-list mt-4">
       <button class="utility-item ripple" type="button" id="btnOpenAdmin" style="background:linear-gradient(135deg, rgba(255,0,128,0.18), rgba(138,43,226,0.18)); border-color: rgba(255,0,128,0.4);">
         <span class="util-left"><span class="util-ico">🛡️</span><span>Admin Panel</span></span><span class="util-chev">›</span>
       </button>
     </div>` : '';
-  const previewToggleHTML = !isInTelegram() ? `
+
+  const previewToggleHTML = (!isInTelegram()) ? `
     <div class="utility-list mt-4">
       <button class="utility-item ripple" type="button" id="btnTogglePreviewAdmin">
         <span class="util-left"><span class="util-ico">🧪</span><span>Enable Admin (Preview Only)</span></span>
         <span class="util-chev">${localAdminPreview ? '✅' : '⬜'}</span>
       </button>
     </div>` : '';
+
   const avatarHTML = currentUser.photo_url
     ? `<img class="profile-avatar" src="${esc(currentUser.photo_url)}" alt="">`
     : `<div class="profile-avatar" style="display:grid;place-items:center;font-size:24px;font-weight:800;color:#fff;">${esc((currentUser.first_name || 'U')[0].toUpperCase())}</div>`;
+
   page.innerHTML = `
     <div class="page-title-bar"><h2 class="page-title">সেটিংস</h2><p class="page-sub">আপনার প্রোফাইল ও অপশন</p></div>
     <div class="profile-card neon-card">
@@ -448,18 +559,28 @@ function renderSettings() {
       <button class="utility-item ripple" type="button" id="btnGoReward"><span class="util-left"><span class="util-ico">🎁</span><span>রিওয়ার্ড সেন্টার</span></span><span class="util-chev">›</span></button>
       <button class="utility-item ripple" type="button" id="btnAbout"><span class="util-left"><span class="util-ico">ℹ️</span><span>অ্যাপ সম্পর্কে</span></span><span class="util-chev">›</span></button>
     </div>
-    ${adminHTML}${previewToggleHTML}`;
+    ${adminHTML}
+    ${previewToggleHTML}`;
+
   document.getElementById('btnShare').addEventListener('click', openShareModal);
   document.getElementById('btnGoChannel').addEventListener('click', () => switchTab('channel'));
   document.getElementById('btnGoReward').addEventListener('click', () => switchTab('reward'));
   document.getElementById('btnAbout').addEventListener('click', () => toast('Viral Video · Premium v1.0', 'success'));
+
   const adminBtn = document.getElementById('btnOpenAdmin');
   if (adminBtn) adminBtn.addEventListener('click', openAdminHub);
+
   const previewBtn = document.getElementById('btnTogglePreviewAdmin');
-  if (previewBtn) previewBtn.addEventListener('click', () => { localAdminPreview = !localAdminPreview; renderSettings(); toast(`Admin preview ${localAdminPreview ? 'enabled' : 'disabled'}`, 'success'); });
+  if (previewBtn) previewBtn.addEventListener('click', () => {
+    localAdminPreview = !localAdminPreview;
+    renderSettings();
+    toast(`Admin preview ${localAdminPreview ? 'enabled' : 'disabled'}`, 'success');
+  });
 }
 
-/* ============ SHARE ============ */
+/* ================================================================
+   SHARE
+   ================================================================ */
 function openShareModal() {
   const L = state.settings.buttonLabels;
   const shareUrl = 'https://t.me/' + BOT_1_USERNAME;
@@ -483,7 +604,9 @@ function openShareModal() {
   });
 }
 
-/* ============ TELEGRAM LINK ============ */
+/* ================================================================
+   TELEGRAM LINK
+   ================================================================ */
 function openTelegramLink(url) {
   if (!url) return toast('লিংক সেট করা নেই', 'error');
   if (tg && typeof tg.openTelegramLink === 'function') {
@@ -492,7 +615,9 @@ function openTelegramLink(url) {
   window.open(url, '_blank');
 }
 
-/* ============ OVERLAY / MODAL ============ */
+/* ================================================================
+   OVERLAY / MODAL
+   ================================================================ */
 const overlayStack = [];
 const modalStack = [];
 
@@ -543,7 +668,9 @@ function popModal(el) {
   setTimeout(() => el.remove(), 300);
 }
 
-/* ============ VIDEO MODAL / AD FLOW ============ */
+/* ================================================================
+   VIDEO MODAL — AD / UNLOCK FLOW
+   ================================================================ */
 let adFlowToken = 0;
 
 function openVideoModal(videoId) {
@@ -553,9 +680,13 @@ function openVideoModal(videoId) {
   const L = state.settings.buttonLabels;
   const coins = getUserCoins();
   const canUseCoins = coins >= state.settings.unlockCoins;
+  const adTotal = getVideoAdCount(v);
+  const interDelay = getInterAdDelaySeconds();
+
   pushModal({
     title: esc(v.title),
     bodyHTML: `<p class="modal-sub"><span class="video-cat">${esc(v.category)}</span> &nbsp;·&nbsp; 👁 ${formatViews(v.views)} views</p>
+      <p class="modal-sub" style="margin-top:-8px;">🎬 <b>${adTotal}</b> টি অ্যাড দেখে আনলক করুন · প্রতি অ্যাডের মাঝে <b>${interDelay}</b> সেকেন্ড বিরতি</p>
       <div id="videoAdArea"></div>
       <div class="modal-actions">
         <button class="btn-primary ripple" type="button" id="btnStartAd">${esc(L.watchAd)}</button>
@@ -570,7 +701,8 @@ function openVideoModal(videoId) {
         const coinsNow = getUserCoins();
         if (coinsNow < state.settings.unlockCoins) return toast('পর্যাপ্ত কয়েন নেই', 'error');
         setUserCoins(coinsNow - state.settings.unlockCoins);
-        incrementAnalytics('unlock'); renderHeader();
+        incrementAnalytics('unlock');
+        renderHeader();
         toast('কয়েন দিয়ে আনলক সফল', 'success');
         popModal(root);
         await deliverVideoToBot2(v);
@@ -579,55 +711,111 @@ function openVideoModal(videoId) {
   });
 }
 
+async function runInterAdCountdown(countdownArea, seconds, token) {
+  countdownArea.innerHTML = `
+    <div class="inter-ad-countdown">
+      <div class="countdown-label">পরবর্তী অ্যাড শুরু হবে</div>
+      <div class="countdown-number" id="countNum">${seconds}</div>
+      <div class="countdown-label">সেকেন্ডে</div>
+    </div>`;
+  const numEl = countdownArea.querySelector('#countNum');
+  for (let s = seconds; s > 0; s--) {
+    if (token !== adFlowToken) return false;
+    if (numEl) numEl.textContent = s;
+    await sleep(1000);
+  }
+  if (token !== adFlowToken) return false;
+  countdownArea.innerHTML = '';
+  return true;
+}
+
 async function runAdFlow(v, adArea, btnStart, btnCoin, modalRoot) {
   const token = ++adFlowToken;
-  const totalSteps = Math.max(1, Number(state.settings.adSteps) || 1);
-  const adsPerStep = Math.max(1, Number(state.settings.adsPerStep) || 1);
-  const totalAds = totalSteps * adsPerStep;
-  btnStart.disabled = true; btnCoin.disabled = true;
-  adArea.innerHTML = `<div class="ad-flow-wrap">
-    <div class="ad-flow-head"><span id="adStepLabel">Step 1/${totalSteps}</span><span class="ad-flow-badge" id="adBadgeLabel">Ad 1/${adsPerStep}</span></div>
-    <div class="ad-flow-bar"><div class="ad-flow-fill" id="adFill"></div></div>
-    <div class="ad-flow-status" id="adStatus">অ্যাড লোড হচ্ছে…</div></div>`;
-  const stepLabel = adArea.querySelector('#adStepLabel');
-  const badgeLabel = adArea.querySelector('#adBadgeLabel');
+  const adCount = getVideoAdCount(v);
+  const interDelay = getInterAdDelaySeconds();
+
+  btnStart.disabled = true;
+  btnCoin.disabled = true;
+
+  adArea.innerHTML = `
+    <div class="ad-flow-wrap">
+      <div class="ad-flow-head">
+        <span id="adSlotLabel">Ad 1/${adCount}</span>
+        <span class="ad-flow-badge" id="adModeBadge">${esc(state.settings.adMode || 'sequential')}</span>
+      </div>
+      <div class="ad-flow-bar"><div class="ad-flow-fill" id="adFill"></div></div>
+      <div class="ad-flow-status" id="adStatus">অ্যাড লোড হচ্ছে…</div>
+      <div class="ad-slot-indicator" id="adDots"></div>
+      <div id="adCountdownArea"></div>
+    </div>`;
+
+  const slotLabel = adArea.querySelector('#adSlotLabel');
   const fill = adArea.querySelector('#adFill');
   const status = adArea.querySelector('#adStatus');
-  let overall = 0, completed = 0;
-  for (let s = 1; s <= totalSteps; s++) {
+  const dotsEl = adArea.querySelector('#adDots');
+  const countdownArea = adArea.querySelector('#adCountdownArea');
+
+  function renderDots(currentIdx, doneCount) {
+    let html = '';
+    for (let i = 0; i < adCount; i++) {
+      let cls = 'ad-slot-dot';
+      if (i < doneCount) cls += ' done';
+      else if (i === currentIdx) cls += ' active';
+      html += `<span class="${cls}"></span>`;
+    }
+    dotsEl.innerHTML = html;
+  }
+
+  for (let i = 1; i <= adCount; i++) {
     if (token !== adFlowToken) return;
-    for (let a = 1; a <= adsPerStep; a++) {
-      if (token !== adFlowToken) return;
-      stepLabel.textContent = `Step ${s}/${totalSteps}`;
-      badgeLabel.textContent = `Ad ${a}/${adsPerStep}`;
-      status.textContent = 'অ্যাড চলছে…';
-      const duration = 1600 + Math.random() * 400;
-      const startTime = performance.now();
-      const base = overall;
-      await new Promise((resolve) => {
-        const tick = () => {
-          if (token !== adFlowToken) return resolve();
-          const t = Math.min(1, (performance.now() - startTime) / duration);
-          fill.style.width = ((base + (1 / totalAds) * t) * 100).toFixed(2) + '%';
-          if (t >= 1) return resolve();
-          requestAnimationFrame(tick);
-        };
+
+    slotLabel.textContent = `Ad ${i}/${adCount}`;
+    status.textContent = 'অ্যাড চলছে…';
+    countdownArea.innerHTML = '';
+    fill.style.width = '0%';
+    renderDots(i - 1, i - 1);
+
+    const duration = 1600 + Math.random() * 400;
+    const startTime = performance.now();
+    await new Promise((resolve) => {
+      const tick = () => {
+        if (token !== adFlowToken) return resolve();
+        const t = Math.min(1, (performance.now() - startTime) / duration);
+        fill.style.width = (t * 100).toFixed(2) + '%';
+        if (t >= 1) return resolve();
         requestAnimationFrame(tick);
-      });
-      if (token !== adFlowToken) return;
-      completed++; overall = completed / totalAds;
-      fill.style.width = (overall * 100).toFixed(2) + '%';
-      if (document.hidden && Math.random() < 0.25) {
-        status.textContent = 'সন্দেহজনক আচরণ — আবার চেষ্টা করুন';
-        toast('সন্দেহজনক আচরণ শনাক্ত', 'error');
-        adFlowToken++; return;
-      }
+      };
+      requestAnimationFrame(tick);
+    });
+    if (token !== adFlowToken) return;
+
+    if (document.hidden && Math.random() < 0.25) {
+      status.textContent = 'সন্দেহজনক আচরণ — আবার চেষ্টা করুন';
+      toast('সন্দেহজনক আচরণ শনাক্ত', 'error');
+      adFlowToken++;
+      return;
+    }
+
+    renderDots(-1, i);
+
+    if (i < adCount) {
+      status.textContent = 'অ্যাড সম্পন্ন · অপেক্ষা করুন…';
+      const ok = await runInterAdCountdown(countdownArea, interDelay, token);
+      if (!ok || token !== adFlowToken) return;
     }
   }
-  state.analytics.totalAdsWatched += totalAds;
+
+  if (token !== adFlowToken) return;
+
+  state.analytics.totalAdsWatched += adCount;
   incrementAnalytics('unlock');
-  adArea.innerHTML = `<div class="reward-unlocked-box mt-2"><span class="unlock-check">✅</span> ভিডিও আনলক হয়েছে</div>
-    <div class="modal-actions"><button class="btn-primary ripple" type="button" id="btnDeliverVideo">${esc(state.settings.buttonLabels.unlock)}</button></div>`;
+
+  adArea.innerHTML = `
+    <div class="reward-unlocked-box mt-2"><span class="unlock-check">✅</span> ভিডিও আনলক হয়েছে</div>
+    <div class="modal-actions">
+      <button class="btn-primary ripple" type="button" id="btnDeliverVideo">${esc(state.settings.buttonLabels.unlock)}</button>
+    </div>`;
+
   const btnDeliver = adArea.querySelector('#btnDeliverVideo');
   btnDeliver.addEventListener('click', async () => {
     popModal(modalRoot);
@@ -641,9 +829,12 @@ function incrementAnalytics(kind) {
   saveState();
 }
 
-/* ============ DELIVER VIDEO ============ */
+/* ================================================================
+   DELIVER VIDEO
+   ================================================================ */
 async function deliverVideoToBot2(video) {
-  const token = await createUnlockToken(currentUser.id, video.id);
+  const msgId = Number(video.messageId) || parseMessageId(video.messageLink) || 0;
+  const token = await createUnlockToken(currentUser.id, video.id, msgId);
   const link = `https://t.me/${BOT_2_USERNAME}?start=${token}`;
   openTelegramLink(link);
   video.views = (Number(video.views) || 0) + 1;
@@ -651,7 +842,9 @@ async function deliverVideoToBot2(video) {
   toast('বট ২-এ পাঠানো হচ্ছে…', 'success');
 }
 
-/* ============ EARN COINS ============ */
+/* ================================================================
+   EARN COINS
+   ================================================================ */
 function openEarnCoinsModal() {
   pushModal({
     title: 'কয়েন আয় করুন',
@@ -697,16 +890,20 @@ function openEarnCoinsModal() {
   });
 }
 
-/* ============ ADMIN HUB ============ */
+/* ================================================================
+   ADMIN HUB
+   ================================================================ */
 function openAdminHub() {
   if (!canSeeAdmin()) return;
   const opts = [
     { key: 'dashboard', ico: '📊', label: 'ড্যাশবোর্ড' },
+    { key: 'adcontrol', ico: '🎬', label: 'অ্যাড কন্ট্রোল' },
     { key: 'upload', ico: '⬆️', label: 'ভিডিও আপলোড করুন' },
+    { key: 'bulkads', ico: '🎛️', label: 'সব ভিডিওর অ্যাড কন্ট্রোল' },
     { key: 'manage', ico: '🗑️', label: 'ভিডিও ডিলিট / ম্যানেজ' },
     { key: 'categories', ico: '🏷️', label: 'ক্যাটাগরি কন্ট্রোল' },
     { key: 'fake', ico: '👥', label: 'ফেক ইউজার ও ভিউ' },
-    { key: 'ads', ico: '⚙️', label: 'অ্যাড ও কয়েন সেটিংস' },
+    { key: 'ads', ico: '⚙️', label: 'কয়েন ও অটো-ডিলিট' },
     { key: 'channel', ico: '📢', label: 'চ্যানেল ও রিওয়ার্ড' },
     { key: 'labels', ico: '🔤', label: 'বাটন নাম পরিবর্তন' },
     { key: 'ban', ico: '🛡️', label: 'অ্যান্টি-চিট / ব্যান' }
@@ -721,17 +918,22 @@ function openAdminPage(key) {
   if (!canSeeAdmin()) return;
   switch (key) {
     case 'dashboard': return adminDashboard();
+    case 'adcontrol': return adminAdControl();
     case 'upload': return adminUpload();
+    case 'bulkads': return adminBulkAds();
     case 'manage': return adminManage();
     case 'categories': return adminCategories();
     case 'fake': return adminFake();
-    case 'ads': return adminAdsSettings();
+    case 'ads': return adminCoinsSettings();
     case 'channel': return adminChannelReward();
     case 'labels': return adminLabels();
     case 'ban': return adminBan();
   }
 }
 
+/* ================================================================
+   ADMIN — DASHBOARD
+   ================================================================ */
 function adminDashboard() {
   const a = state.analytics;
   const revenue = a.totalAdsWatched * 0.02;
@@ -745,11 +947,64 @@ function adminDashboard() {
       <div class="admin-stat"><span class="as-label">আনুমানিক আয়</span><span class="as-value">$${revenue.toFixed(2)}</span></div>
     </div>
     <div class="admin-panel-card neon-card mt-3">
-      <h4 class="admin-section-title">দ্রুত পরিসংখ্যান</h4>
+      <h4 class="admin-section-title">সারসংক্ষেপ</h4>
       <p class="modal-sub" style="margin:0">ক্যাটাগরি: <b>${state.categories.length}</b> · রিওয়ার্ড: <b>${state.rewards.length}</b> · ব্যান: <b>${state.bannedUsers.length}</b></p>
     </div>`);
 }
 
+/* ================================================================
+   ADMIN — AD CONTROL (GLOBAL)
+   ================================================================ */
+function adminAdControl() {
+  const s = state.settings;
+  pushOverlay(`${overlayHeaderHTML('অ্যাড কন্ট্রোল')}
+    <div class="admin-panel-card neon-card">
+      <h4 class="admin-section-title">গ্লোবাল অ্যাড সেটিংস</h4>
+      <div class="admin-field">
+        <label>প্রতি ভিডিও ডিফল্ট অ্যাড সংখ্যা</label>
+        <input type="number" id="acDefault" min="1" value="${Number(s.defaultAdCount) || DEFAULT_AD_COUNT}">
+      </div>
+      <div class="admin-field">
+        <label>অ্যাডের মধ্যে বিরতি (সেকেন্ড)</label>
+        <input type="number" id="acDelay" min="1" value="${Number(s.interAdDelaySeconds) || DEFAULT_INTER_AD_DELAY_SECONDS}">
+      </div>
+      <div class="admin-field">
+        <label>অ্যাড মোড</label>
+        <select id="acMode">
+          <option value="sequential" ${s.adMode === 'sequential' ? 'selected' : ''}>সিকোয়েনশিয়াল (একে একে)</option>
+        </select>
+      </div>
+      <button class="btn-primary ripple" type="button" id="btnSaveAdControl">সেভ করুন</button>
+      <div class="admin-status-msg" id="acStatus"></div>
+    </div>
+    <div class="admin-panel-card neon-card mt-3">
+      <h4 class="admin-section-title">সারসংক্ষেপ</h4>
+      <p class="modal-sub" style="margin:0">প্রতিটি ভিডিওতে ডিফল্ট <b>${Number(s.defaultAdCount) || DEFAULT_AD_COUNT}</b> টি অ্যাড · প্রতি অ্যাডের মাঝে <b>${Number(s.interAdDelaySeconds) || DEFAULT_INTER_AD_DELAY_SECONDS}</b> সেকেন্ড বিরতি।</p>
+    </div>`, {
+    onMount: (root) => {
+      const status = root.querySelector('#acStatus');
+      root.querySelector('#btnSaveAdControl').addEventListener('click', () => {
+        const def = parseInt(root.querySelector('#acDefault').value, 10);
+        const delay = parseInt(root.querySelector('#acDelay').value, 10);
+        const mode = root.querySelector('#acMode').value;
+        status.className = 'admin-status-msg';
+        if (!Number.isFinite(def) || def < 1) { status.textContent = 'অ্যাড সংখ্যা ১ বা তার বেশি দিন'; status.classList.add('err'); return; }
+        if (!Number.isFinite(delay) || delay < 1) { status.textContent = 'বিরতি ১ বা তার বেশি দিন'; status.classList.add('err'); return; }
+        state.settings.defaultAdCount = def;
+        state.settings.interAdDelaySeconds = delay;
+        state.settings.adMode = mode;
+        saveState();
+        status.textContent = 'সেভ হয়েছে'; status.classList.add('ok');
+        toast('অ্যাড কন্ট্রোল সেভ হয়েছে', 'success');
+        if (currentTab === 'home') renderHome();
+      });
+    }
+  });
+}
+
+/* ================================================================
+   ADMIN — UPLOAD
+   ================================================================ */
 function adminUpload() {
   const catOpts = state.categories.filter(c => c !== 'সব').map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   pushOverlay(`${overlayHeaderHTML('ভিডিও আপলোড করুন')}
@@ -759,6 +1014,7 @@ function adminUpload() {
       <div class="admin-field"><label>প্রাইভেট চ্যানেল মেসেজ লিংক / ID</label><input type="text" id="upMsg" placeholder="https://t.me/private_channel/123 অথবা 123"></div>
       <div class="admin-field"><label>ক্যাটাগরি</label><select id="upCat">${catOpts}</select></div>
       <div class="admin-field"><label>ম্যানুয়াল ভিউ</label><input type="number" id="upViews" min="0" value="0"></div>
+      <div class="admin-field"><label>প্রতি ভিডিওর অ্যাড সংখ্যা (খালি = গ্লোবাল ডিফল্ট)</label><input type="number" id="upAdCount" min="0" placeholder="খালি রাখলে ডিফল্ট ব্যবহার হবে"></div>
       <button class="btn-primary ripple" type="button" id="btnUpload">ভিডিও আপলোড করুন</button>
       <div class="admin-status-msg" id="upStatus"></div>
     </div>`, {
@@ -771,27 +1027,126 @@ function adminUpload() {
         const msg = root.querySelector('#upMsg').value.trim();
         const cat = root.querySelector('#upCat').value;
         const views = parseInt(root.querySelector('#upViews').value, 10) || 0;
+        const adCountRaw = root.querySelector('#upAdCount').value.trim();
+        const adCountParsed = adCountRaw ? parseInt(adCountRaw, 10) : null;
+        const adCount = (Number.isFinite(adCountParsed) && adCountParsed > 0) ? adCountParsed : null;
+
         if (!title) { status.textContent = 'শিরোনাম প্রয়োজন'; status.classList.add('err'); return; }
         if (!msg) { status.textContent = 'মেসেজ লিংক / ID প্রয়োজন'; status.classList.add('err'); return; }
         const messageId = parseMessageId(msg);
         if (!messageId) { status.textContent = 'সঠিক মেসেজ লিংক বা ID দিন'; status.classList.add('err'); return; }
-        const newV = { id: uid('v'), title, thumbnail: thumb, messageLink: msg, messageId, category: cat, views };
+
+        const newV = { id: uid('v'), title, thumbnail: thumb, messageLink: msg, messageId, category: cat, views, adCount };
         state.videos.unshift(newV);
         saveState();
         status.textContent = 'সফলভাবে আপলোড হয়েছে!'; status.classList.add('ok');
-        root.querySelector('#upTitle').value = ''; root.querySelector('#upThumb').value = '';
-        root.querySelector('#upMsg').value = ''; root.querySelector('#upViews').value = '0';
+        root.querySelector('#upTitle').value = '';
+        root.querySelector('#upThumb').value = '';
+        root.querySelector('#upMsg').value = '';
+        root.querySelector('#upViews').value = '0';
+        root.querySelector('#upAdCount').value = '';
         if (currentTab === 'home') renderHome();
       });
     }
   });
 }
 
+/* ================================================================
+   ADMIN — BULK ADS
+   ================================================================ */
+function adminBulkAds() {
+  const renderList = () => state.videos.map(v => {
+    const val = (v.adCount && Number(v.adCount) > 0) ? v.adCount : '';
+    const placeholder = `ডিফল্ট (${Number(state.settings.defaultAdCount) || DEFAULT_AD_COUNT})`;
+    const sub = (v.adCount && Number(v.adCount) > 0)
+      ? `কাস্টম: ${v.adCount} অ্যাড`
+      : `ডিফল্ট: ${Number(state.settings.defaultAdCount) || DEFAULT_AD_COUNT} অ্যাড`;
+    return `<div class="admin-list-row">
+      <div class="row-main">
+        <span class="row-title">${esc(v.title)}</span>
+        <span class="row-sub">${esc(sub)}</span>
+      </div>
+      <div class="admin-row-actions">
+        <input type="number" min="1" class="admin-inline-input" data-bulk-id="${esc(v.id)}" value="${val}" placeholder="${esc(placeholder)}">
+      </div>
+    </div>`;
+  }).join('') || `<div class="empty-state">কোন ভিডিও নেই</div>`;
+
+  pushOverlay(`${overlayHeaderHTML('সব ভিডিওর অ্যাড কন্ট্রোল')}
+    <div class="admin-panel-card neon-card">
+      <h4 class="admin-section-title">সব ভিডিওতে একই অ্যাড সংখ্যা প্রয়োগ</h4>
+      <div class="admin-field">
+        <label>নতুন অ্যাড সংখ্যা</label>
+        <input type="number" id="bulkAllValue" min="1" value="${Number(state.settings.defaultAdCount) || DEFAULT_AD_COUNT}">
+      </div>
+      <button class="btn-primary ripple" type="button" id="btnApplyAll">সব ভিডিওতে প্রয়োগ করুন</button>
+      <button class="btn-ghost ripple" type="button" id="btnClearAll" style="margin-top:10px">সব ভিডিও থেকে কাস্টম সরান (ডিফল্টে ফিরে যান)</button>
+      <div class="admin-status-msg" id="bulkStatus"></div>
+    </div>
+    <div class="admin-panel-card neon-card mt-3">
+      <h4 class="admin-section-title">ভিডিও-ভিত্তিক অ্যাড সংখ্যা</h4>
+      <div id="bulkList">${renderList()}</div>
+      <button class="btn-primary ripple" type="button" id="btnSaveBulk" style="margin-top:10px">সব সেভ করুন</button>
+    </div>`, {
+    onMount: (root) => {
+      const status = root.querySelector('#bulkStatus');
+      const list = root.querySelector('#bulkList');
+
+      root.querySelector('#btnApplyAll').addEventListener('click', () => {
+        const val = parseInt(root.querySelector('#bulkAllValue').value, 10);
+        status.className = 'admin-status-msg';
+        if (!Number.isFinite(val) || val < 1) { status.textContent = 'সঠিক সংখ্যা দিন'; status.classList.add('err'); return; }
+        state.videos.forEach(v => { v.adCount = val; });
+        saveState();
+        list.innerHTML = renderList();
+        status.textContent = 'সব ভিডিওতে প্রয়োগ হয়েছে'; status.classList.add('ok');
+        toast('প্রয়োগ হয়েছে', 'success');
+        if (currentTab === 'home') renderHome();
+      });
+
+      root.querySelector('#btnClearAll').addEventListener('click', () => {
+        state.videos.forEach(v => { v.adCount = null; });
+        saveState();
+        list.innerHTML = renderList();
+        status.className = 'admin-status-msg ok';
+        status.textContent = 'কাস্টম সরানো হয়েছে (ডিফল্ট ব্যবহার হবে)';
+        toast('কাস্টম সরানো হয়েছে', 'success');
+        if (currentTab === 'home') renderHome();
+      });
+
+      root.querySelector('#btnSaveBulk').addEventListener('click', () => {
+        status.className = 'admin-status-msg';
+        list.querySelectorAll('input[data-bulk-id]').forEach(inp => {
+          const id = inp.dataset.bulkId;
+          const v = state.videos.find(x => x.id === id);
+          if (!v) return;
+          const raw = inp.value.trim();
+          if (!raw) { v.adCount = null; return; }
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n) && n > 0) v.adCount = n;
+        });
+        saveState();
+        list.innerHTML = renderList();
+        status.textContent = 'সেভ হয়েছে'; status.classList.add('ok');
+        toast('বাল্ক সেভ হয়েছে', 'success');
+        if (currentTab === 'home') renderHome();
+      });
+    }
+  });
+}
+
+/* ================================================================
+   ADMIN — MANAGE / DELETE
+   ================================================================ */
 function adminManage() {
   const render = () => state.videos.map(v => `<div class="admin-list-row">
-    <div class="row-main"><span class="row-title">${esc(v.title)}</span><span class="row-sub">${esc(v.category)} · 👁 ${formatViews(v.views)} · msgId ${v.messageId || '—'}</span></div>
+    <div class="row-main">
+      <span class="row-title">${esc(v.title)}</span>
+      <span class="row-sub">${esc(v.category)} · 👁 ${formatViews(v.views)} · msgId ${v.messageId || '—'} · ${v.adCount || 'ডিফল্ট'}</span>
+    </div>
     <div class="admin-row-actions"><button class="admin-mini-btn danger ripple" type="button" data-del="${esc(v.id)}">ডিলিট</button></div>
   </div>`).join('') || `<div class="empty-state"><div class="empty-ico">🎬</div><div>কোন ভিডিও নেই</div></div>`;
+
   pushOverlay(`${overlayHeaderHTML('ভিডিও ম্যানেজ / ডিলিট')}
     <div class="admin-panel-card neon-card"><div id="manageList">${render()}</div></div>`, {
     onMount: (root) => {
@@ -809,6 +1164,9 @@ function adminManage() {
   });
 }
 
+/* ================================================================
+   ADMIN — CATEGORIES
+   ================================================================ */
 function adminCategories() {
   const renderList = () => state.categories.map(c => {
     const locked = c === 'সব';
@@ -818,6 +1176,7 @@ function adminCategories() {
         ${locked ? '<span class="row-sub">default</span>' : `<button class="admin-mini-btn ripple" type="button" data-rename="${esc(c)}">রিনেম</button><button class="admin-mini-btn danger ripple" type="button" data-remove="${esc(c)}">ডিলিট</button>`}
       </div></div>`;
   }).join('');
+
   pushOverlay(`${overlayHeaderHTML('ক্যাটাগরি কন্ট্রোল')}
     <div class="admin-panel-card neon-card">
       <div class="admin-field"><label>নতুন ক্যাটাগরি</label><input type="text" id="catNew" placeholder="যেমন: টেকনোলজি"></div>
@@ -835,9 +1194,11 @@ function adminCategories() {
         const v = root.querySelector('#catNew').value.trim();
         if (!v) { status.textContent = 'নাম দিন'; status.className = 'admin-status-msg err'; return; }
         if (state.categories.includes(v)) { status.textContent = 'এই নাম আগে থেকেই আছে'; status.className = 'admin-status-msg err'; return; }
-        state.categories.push(v); saveState();
+        state.categories.push(v);
+        saveState();
         root.querySelector('#catNew').value = '';
-        status.textContent = 'যোগ হয়েছে'; status.className = 'admin-status-msg ok';
+        status.textContent = 'যোগ হয়েছে';
+        status.className = 'admin-status-msg ok';
         list.innerHTML = renderList();
         if (currentTab === 'home') renderHome();
       });
@@ -851,7 +1212,8 @@ function adminCategories() {
           const newName = nv.trim();
           state.categories = state.categories.map(c => c === old ? newName : c);
           state.videos.forEach(v => { if (v.category === old) v.category = newName; });
-          saveState(); list.innerHTML = renderList();
+          saveState();
+          list.innerHTML = renderList();
           if (currentTab === 'home') renderHome();
           toast('রিনেম হয়েছে', 'success');
         }
@@ -860,7 +1222,8 @@ function adminCategories() {
           if (!confirm(`"${c}" ডিলিট করবেন?`)) return;
           state.categories = state.categories.filter(x => x !== c);
           state.videos = state.videos.map(v => v.category === c ? { ...v, category: state.categories[1] || 'অন্যান্য' } : v);
-          saveState(); list.innerHTML = renderList();
+          saveState();
+          list.innerHTML = renderList();
           if (currentTab === 'home') renderHome();
           toast('ডিলিট হয়েছে', 'success');
         }
@@ -869,6 +1232,9 @@ function adminCategories() {
   });
 }
 
+/* ================================================================
+   ADMIN — FAKE USERS & VIEWS
+   ================================================================ */
 function adminFake() {
   pushOverlay(`${overlayHeaderHTML('ফেক ইউজার ও ভিউ সেটিংস')}
     <div class="admin-panel-card neon-card">
@@ -891,8 +1257,10 @@ function adminFake() {
       const status = root.querySelector('#fkStatus');
       root.querySelector('#btnSaveFk').addEventListener('click', () => {
         const val = root.querySelector('#fkUsers').value.trim() || DEFAULT_FAKE_USERS;
-        state.settings.fakeUsers = val; saveState();
-        status.textContent = 'সেভ হয়েছে'; status.className = 'admin-status-msg ok';
+        state.settings.fakeUsers = val;
+        saveState();
+        status.textContent = 'সেভ হয়েছে';
+        status.className = 'admin-status-msg ok';
         if (currentTab === 'settings') renderSettings();
       });
       root.addEventListener('click', (e) => {
@@ -904,15 +1272,17 @@ function adminFake() {
           const delta = parseInt(prompt('কত ভিউ যোগ করবেন?', '100'), 10);
           if (!Number.isFinite(delta) || delta === 0) return;
           v.views = Math.max(0, (Number(v.views) || 0) + delta);
-          saveState(); toast('ভিউ আপডেট হয়েছে', 'success');
+          saveState();
+          toast('ভিউ আপডেট হয়েছে', 'success');
           popOverlay(); adminFake();
         }
         if (set) {
           const v = state.videos.find(x => x.id === set.dataset.setViews);
           if (!v) return;
-          const target = parseInt(prompt('নতুন ভিউ', String(v.views)), 10);
+          const target = parseInt(prompt('নতুন ভিউ সংখ্যা', String(v.views)), 10);
           if (!Number.isFinite(target) || target < 0) return;
-          v.views = target; saveState();
+          v.views = target;
+          saveState();
           toast('ভিউ সেট হয়েছে', 'success');
           popOverlay(); adminFake();
         }
@@ -921,14 +1291,15 @@ function adminFake() {
   });
 }
 
-function adminAdsSettings() {
+/* ================================================================
+   ADMIN — COINS & AUTO-DELETE
+   ================================================================ */
+function adminCoinsSettings() {
   const s = state.settings;
-  pushOverlay(`${overlayHeaderHTML('অ্যাড, কয়েন ও টাইমার সেটিংস')}
+  pushOverlay(`${overlayHeaderHTML('কয়েন ও অটো-ডিলিট সেটিংস')}
     <div class="admin-panel-card neon-card">
       <div class="admin-field"><label>কয়েন প্রতি অ্যাড</label><input type="number" id="setCoins" min="1" value="${s.coinsPerAd}"></div>
       <div class="admin-field"><label>আনলক করতে কয়েন লাগবে</label><input type="number" id="setUnlock" min="1" value="${s.unlockCoins}"></div>
-      <div class="admin-field"><label>অ্যাড স্টেপ সংখ্যা</label><input type="number" id="setSteps" min="1" value="${s.adSteps}"></div>
-      <div class="admin-field"><label>প্রতি স্টেপে অ্যাড</label><input type="number" id="setAdsPer" min="1" value="${s.adsPerStep}"></div>
       <div class="admin-field"><label>অটো-ডিলিট টাইমার (মিনিট)</label><input type="number" id="setTimer" min="1" value="${s.autoDeleteMinutes}"></div>
       <button class="btn-primary ripple" type="button" id="btnSaveAds">সেভ করুন</button>
       <div class="admin-status-msg" id="adsStatus"></div>
@@ -938,19 +1309,18 @@ function adminAdsSettings() {
       root.querySelector('#btnSaveAds').addEventListener('click', () => {
         const coins = parseInt(root.querySelector('#setCoins').value, 10);
         const unlock = parseInt(root.querySelector('#setUnlock').value, 10);
-        const steps = parseInt(root.querySelector('#setSteps').value, 10);
-        const adsPer = parseInt(root.querySelector('#setAdsPer').value, 10);
         const timer = parseInt(root.querySelector('#setTimer').value, 10);
-        if (![coins, unlock, steps, adsPer, timer].every(n => Number.isFinite(n) && n > 0)) {
-          status.textContent = 'সব ফিল্ডে ১ বা তার বেশি দিন'; status.className = 'admin-status-msg err'; return;
+        if (![coins, unlock, timer].every(n => Number.isFinite(n) && n > 0)) {
+          status.textContent = 'সব ফিল্ডে ১ বা তার বেশি দিন';
+          status.className = 'admin-status-msg err';
+          return;
         }
         state.settings.coinsPerAd = coins;
         state.settings.unlockCoins = unlock;
-        state.settings.adSteps = steps;
-        state.settings.adsPerStep = adsPer;
         state.settings.autoDeleteMinutes = timer;
         saveState();
-        status.textContent = 'সেভ হয়েছে'; status.className = 'admin-status-msg ok';
+        status.textContent = 'সেভ হয়েছে';
+        status.className = 'admin-status-msg ok';
         if (currentTab === 'reward') renderReward();
         toast('সেটিংস সেভ হয়েছে', 'success');
       });
@@ -958,12 +1328,16 @@ function adminAdsSettings() {
   });
 }
 
+/* ================================================================
+   ADMIN — CHANNEL & REWARD
+   ================================================================ */
 function adminChannelReward() {
   const s = state.settings;
   const rewardsListHTML = () => state.rewards.map(r => `<div class="admin-list-row">
     <div class="row-main"><span class="row-title">${esc(r.title)}</span><span class="row-sub">${r.type} · 🪙 ${r.coinCost}</span></div>
     <div class="admin-row-actions"><button class="admin-mini-btn danger ripple" type="button" data-del-reward="${esc(r.id)}">ডিলিট</button></div>
   </div>`).join('') || `<div class="empty-state">কোন রিওয়ার্ড নেই</div>`;
+
   pushOverlay(`${overlayHeaderHTML('চ্যানেল ও রিওয়ার্ড সেটিংস')}
     <div class="admin-panel-card neon-card">
       <div class="admin-field"><label>চ্যানেল টাইটেল</label><input type="text" id="chTitle" value="${esc(s.channelTitle)}"></div>
@@ -995,7 +1369,8 @@ function adminChannelReward() {
         s.channelLink = root.querySelector('#chLink').value.trim() || s.channelLink;
         s.channelDesc = root.querySelector('#chDesc').value.trim() || s.channelDesc;
         saveState();
-        chStatus.textContent = 'সেভ হয়েছে'; chStatus.className = 'admin-status-msg ok';
+        chStatus.textContent = 'সেভ হয়েছে';
+        chStatus.className = 'admin-status-msg ok';
         if (currentTab === 'channel') renderChannel();
       });
       root.querySelector('#btnAddReward').addEventListener('click', () => {
@@ -1005,16 +1380,18 @@ function adminChannelReward() {
         const cost = parseInt(root.querySelector('#rwCost').value, 10);
         const link = root.querySelector('#rwLink').value.trim();
         const videoId = root.querySelector('#rwVideo').value;
-        if (!title) { rwStatus.textContent = 'টাইটেল প্রয়োজন'; rwStatus.className = 'admin-status-msg err'; return; }
-        if (!Number.isFinite(cost) || cost < 1) { rwStatus.textContent = 'সঠিক কয়েন কস্ট'; rwStatus.className = 'admin-status-msg err'; return; }
-        if (type === 'channel' && !link) { rwStatus.textContent = 'লিংক দিন'; rwStatus.className = 'admin-status-msg err'; return; }
-        if (type === 'video' && !videoId) { rwStatus.textContent = 'ভিডিও সিলেক্ট করুন'; rwStatus.className = 'admin-status-msg err'; return; }
+        rwStatus.className = 'admin-status-msg';
+        if (!title) { rwStatus.textContent = 'টাইটেল প্রয়োজন'; rwStatus.classList.add('err'); return; }
+        if (!Number.isFinite(cost) || cost < 1) { rwStatus.textContent = 'সঠিক কয়েন কস্ট দিন'; rwStatus.classList.add('err'); return; }
+        if (type === 'channel' && !link) { rwStatus.textContent = 'চ্যানেলের জন্য লিংক দিন'; rwStatus.classList.add('err'); return; }
+        if (type === 'video' && !videoId) { rwStatus.textContent = 'একটি ভিডিও সিলেক্ট করুন'; rwStatus.classList.add('err'); return; }
         state.rewards.push({ id: uid('r'), title, description: desc, type, coinCost: cost, link, videoId });
         saveState();
-        root.querySelector('#rwTitle').value = ''; root.querySelector('#rwDesc').value = '';
+        root.querySelector('#rwTitle').value = '';
+        root.querySelector('#rwDesc').value = '';
         root.querySelector('#rwLink').value = '';
         root.querySelector('#rewardList').innerHTML = rewardsListHTML();
-        rwStatus.textContent = 'রিওয়ার্ড যোগ হয়েছে'; rwStatus.className = 'admin-status-msg ok';
+        rwStatus.textContent = 'রিওয়ার্ড যোগ হয়েছে'; rwStatus.classList.add('ok');
         if (currentTab === 'reward') renderReward();
       });
       root.querySelector('#rewardList').addEventListener('click', (e) => {
@@ -1031,6 +1408,9 @@ function adminChannelReward() {
   });
 }
 
+/* ================================================================
+   ADMIN — LABELS
+   ================================================================ */
 function adminLabels() {
   const L = state.settings.buttonLabels;
   const fields = [
@@ -1054,7 +1434,8 @@ function adminLabels() {
           if (v) L[k] = v;
         });
         saveState();
-        status.textContent = 'সেভ হয়েছে'; status.className = 'admin-status-msg ok';
+        status.textContent = 'সেভ হয়েছে';
+        status.className = 'admin-status-msg ok';
         renderHeader();
         toast('বাটন লেবেল আপডেট হয়েছে', 'success');
       });
@@ -1062,12 +1443,17 @@ function adminLabels() {
   });
 }
 
+/* ================================================================
+   ADMIN — BAN
+   ================================================================ */
 function adminBan() {
-  const renderList = () => state.bannedUsers.length === 0 ? `<div class="empty-state">কোন ব্যানকৃত ইউজার নেই</div>`
+  const renderList = () => state.bannedUsers.length === 0
+    ? `<div class="empty-state">কোন ব্যানকৃত ইউজার নেই</div>`
     : state.bannedUsers.map(id => `<div class="admin-list-row">
-      <div class="row-main"><span class="row-title">#${id}</span></div>
-      <div class="admin-row-actions"><button class="admin-mini-btn ripple" type="button" data-unban="${id}">আনব্যান</button></div>
+      <div class="row-main"><span class="row-title">#${esc(id)}</span></div>
+      <div class="admin-row-actions"><button class="admin-mini-btn ripple" type="button" data-unban="${esc(id)}">আনব্যান</button></div>
     </div>`).join('');
+
   pushOverlay(`${overlayHeaderHTML('অ্যান্টি-চিট / ইউজার ব্যান')}
     <div class="admin-panel-card neon-card">
       <div class="admin-field"><label>Telegram Numeric ID</label><input type="number" id="banId" placeholder="123456789"></div>
@@ -1083,18 +1469,20 @@ function adminBan() {
       const list = root.querySelector('#banList');
       root.querySelector('#btnBan').addEventListener('click', () => {
         const id = parseInt(root.querySelector('#banId').value, 10);
-        if (!Number.isFinite(id) || id <= 0) { status.textContent = 'সঠিক ID'; status.className = 'admin-status-msg err'; return; }
-        if (state.bannedUsers.includes(id)) { status.textContent = 'ইতিমধ্যে ব্যান'; status.className = 'admin-status-msg err'; return; }
-        state.bannedUsers.push(id); saveState();
+        status.className = 'admin-status-msg';
+        if (!Number.isFinite(id) || id <= 0) { status.textContent = 'সঠিক ID দিন'; status.classList.add('err'); return; }
+        if (state.bannedUsers.some(x => normalizeId(x) === normalizeId(id))) { status.textContent = 'ইতিমধ্যে ব্যান করা আছে'; status.classList.add('err'); return; }
+        state.bannedUsers.push(id);
+        saveState();
         root.querySelector('#banId').value = '';
         list.innerHTML = renderList();
-        status.textContent = 'ব্যান সফল'; status.className = 'admin-status-msg ok';
+        status.textContent = 'ব্যান সফল হয়েছে'; status.classList.add('ok');
       });
       list.addEventListener('click', (e) => {
         const u = e.target.closest('[data-unban]');
         if (!u) return;
-        const id = parseInt(u.dataset.unban, 10);
-        state.bannedUsers = state.bannedUsers.filter(x => x !== id);
+        const target = normalizeId(u.dataset.unban);
+        state.bannedUsers = state.bannedUsers.filter(x => normalizeId(x) !== target);
         saveState();
         list.innerHTML = renderList();
         toast('আনব্যান হয়েছে', 'success');
@@ -1103,7 +1491,9 @@ function adminBan() {
   });
 }
 
-/* ============ START PARAM ============ */
+/* ================================================================
+   START PARAM
+   ================================================================ */
 function handleStartParam() {
   if (!tg || !tg.initDataUnsafe) return;
   const sp = tg.initDataUnsafe.start_param;
@@ -1118,7 +1508,9 @@ function handleStartParam() {
   }
 }
 
-/* ============ BOOT ============ */
+/* ================================================================
+   BOOT
+   ================================================================ */
 async function boot() {
   state = loadStateLocal();
   coinsMap = loadCoinsLocal();
@@ -1139,7 +1531,6 @@ async function boot() {
 
   handleStartParam();
 
-  // Async Firebase sync
   const ok = await initFirebase();
   if (ok) {
     const remote = await loadStateRemote();
@@ -1149,7 +1540,7 @@ async function boot() {
       renderHome();
       if (currentTab === 'reward') renderReward();
       if (currentTab === 'channel') renderChannel();
-      if (currentTab === 'settings') renderSettings();
+      if (currentTab === 'settings') { refreshUserFromTelegram(); renderSettings(); }
     }
     const remoteCoins = await loadCoinsRemote(currentUser.id);
     if (remoteCoins !== null) {
