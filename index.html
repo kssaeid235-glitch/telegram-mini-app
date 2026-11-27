@@ -4,9 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#07070d">
-<meta name="description" content="Viral Video · Premium Telegram Mini App">
 <title>Viral Video · Premium</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -46,20 +48,16 @@
 
   <nav class="bottom-nav" id="bottomNav">
     <button class="nav-btn active ripple" data-nav="home" type="button">
-      <span class="nav-ico">🏠</span>
-      <span class="nav-label" id="navLabelHome">হোম</span>
+      <span class="nav-ico">🏠</span><span class="nav-label" id="navLabelHome">হোম</span>
     </button>
     <button class="nav-btn ripple" data-nav="reward" type="button">
-      <span class="nav-ico">🎁</span>
-      <span class="nav-label" id="navLabelReward">রিওয়ার্ড</span>
+      <span class="nav-ico">🎁</span><span class="nav-label" id="navLabelReward">রিওয়ার্ড</span>
     </button>
     <button class="nav-btn ripple" data-nav="channel" type="button">
-      <span class="nav-ico">📢</span>
-      <span class="nav-label" id="navLabelChannel">চ্যানেল</span>
+      <span class="nav-ico">📢</span><span class="nav-label" id="navLabelChannel">চ্যানেল</span>
     </button>
     <button class="nav-btn ripple" data-nav="settings" type="button">
-      <span class="nav-ico">⚙️</span>
-      <span class="nav-label" id="navLabelSettings">সেটিংস</span>
+      <span class="nav-ico">⚙️</span><span class="nav-label" id="navLabelSettings">সেটিংস</span>
     </button>
   </nav>
 
