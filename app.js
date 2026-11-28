@@ -17,8 +17,11 @@ const DEFAULT_AUTO_DELETE_MINUTES = 30;
 const DEFAULT_AD_COUNT = 3;
 const DEFAULT_INTER_AD_DELAY_SECONDS = 5;
 
-const STORAGE_KEY = 'vva_state_v1';
-const COIN_STORE_KEY = 'vva_coins_v1';
+const DEFAULT_IMGBB_API_KEY = '07beebdc2b5c76020dde2c70cc81835d';
+const DEFAULT_IMGBB_API_URL = 'https://api.imgbb.com/1/upload';
+
+const STORAGE_KEY = 'vva_state_v2';
+const COIN_STORE_KEY = 'vva_coins_v2';
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 
 /* ================================================================
@@ -54,6 +57,8 @@ const DEFAULT_STATE = {
     defaultAdCount: DEFAULT_AD_COUNT,
     interAdDelaySeconds: DEFAULT_INTER_AD_DELAY_SECONDS,
     adMode: 'sequential',
+    imgbbApiKey: DEFAULT_IMGBB_API_KEY,
+    imgbbApiUrl: DEFAULT_IMGBB_API_URL,
     channelLink: 'https://t.me/Viral_Video_app_bot',
     channelTitle: 'Viral Video Official',
     channelDesc: 'প্রতিদিন নতুন এক্সক্লুসিভ ভিডিও পেতে আমাদের চ্যানেলে জয়েন করুন।',
@@ -87,7 +92,7 @@ let localAdminPreview = false;
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
 /* ================================================================
-   ID NORMALIZATION + ADMIN CHECK (critical fix)
+   ID NORMALIZATION + ADMIN CHECK
    ================================================================ */
 function normalizeId(v) {
   if (v === null || v === undefined) return '';
@@ -107,20 +112,12 @@ function readTelegramUserId() {
   }
 }
 
-function getActiveUserId() {
-  const tgId = readTelegramUserId();
-  if (tgId === ADMIN_NUMERIC_ID_STR) return ADMIN_NUMERIC_ID_STR;
-  const cur = normalizeId(currentUser ? currentUser.id : '');
-  if (cur === ADMIN_NUMERIC_ID_STR) return ADMIN_NUMERIC_ID_STR;
-  if (cur) return cur;
-  return tgId;
-}
-
 function isAdminNow() {
   const tgId = readTelegramUserId();
   if (tgId === ADMIN_NUMERIC_ID_STR) return true;
   const cur = normalizeId(currentUser ? currentUser.id : '');
   if (cur === ADMIN_NUMERIC_ID_STR) return true;
+  if (!isInTelegram() && localAdminPreview) return true;
   return false;
 }
 
@@ -242,14 +239,11 @@ function initTelegram() {
     try {
       tg.ready();
       tg.expand();
-      if (tg.setHeaderColor) tg.setHeaderColor('#07070d');
-      if (tg.setBackgroundColor) tg.setBackgroundColor('#07070d');
-      if (typeof tg.onEvent === 'function') {
-        try { tg.onEvent('themeChanged', () => { /* no-op re-render hook */ }); } catch (e) {}
-      }
+      if (tg.setHeaderColor) tg.setHeaderColor('#FFFFFF');
+      if (tg.setBackgroundColor) tg.setBackgroundColor('#F8FAFC');
     } catch (e) {}
   }
-  const changed = refreshUserFromTelegram();
+  refreshUserFromTelegram();
   if (!currentUser) {
     currentUser = {
       id: 100000001,
@@ -260,7 +254,6 @@ function initTelegram() {
       inTelegram: false
     };
   }
-  return changed;
 }
 
 /* ================================================================
@@ -300,15 +293,16 @@ function toast(msg, type) {
   el.textContent = msg;
   root.appendChild(el);
   setTimeout(() => {
-    el.style.transition = 'opacity .3s ease, transform .3s ease';
-    el.style.opacity = '0'; el.style.transform = 'translateY(8px)';
-    setTimeout(() => el.remove(), 320);
+    el.style.transition = 'opacity .25s ease, transform .25s ease';
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(6px)';
+    setTimeout(() => el.remove(), 260);
   }, 2400);
 }
 
 function attachRipple() {
   document.addEventListener('click', (e) => {
-    const target = e.target.closest('.ripple, .btn-primary, .btn-ghost, .btn-unlock, .cat-pill, .video-card, .nav-btn, .admin-hub-btn, .admin-mini-btn, .utility-item, .overlay-back, .modal-close-x, .admin-entry-banner');
+    const target = e.target.closest('.ripple, .btn-primary, .btn-secondary, .btn-ghost, .btn-unlock, .cat-pill, .video-card, .nav-btn, .admin-hub-btn, .admin-mini-btn, .utility-item, .overlay-back, .modal-close-x, .admin-entry-banner');
     if (!target) return;
     const rect = target.getBoundingClientRect();
     const size = Math.max(rect.width, rect.height) * 1.2;
@@ -320,7 +314,7 @@ function attachRipple() {
     const cs = getComputedStyle(target);
     if (cs.position === 'static') target.style.position = 'relative';
     target.appendChild(span);
-    setTimeout(() => span.remove(), 640);
+    setTimeout(() => span.remove(), 520);
   }, true);
 }
 
@@ -345,6 +339,39 @@ function getInterAdDelaySeconds() {
   const n = Number(state.settings.interAdDelaySeconds);
   if (Number.isFinite(n) && n > 0) return Math.floor(n);
   return DEFAULT_INTER_AD_DELAY_SECONDS;
+}
+
+/* ================================================================
+   IMGBB UPLOAD
+   ================================================================ */
+async function uploadThumbnailToImgBB(file, apiKey, apiUrl) {
+  if (!file) throw new Error('ফাইল নির্বাচন করা হয়নি');
+  if (!file.type || !file.type.startsWith('image/')) throw new Error('শুধুমাত্র ইমেজ ফাইল দিন');
+  if (file.size > 32 * 1024 * 1024) throw new Error('ফাইল ৩২MB এর বেশি');
+
+  const key = (apiKey || '').trim() || DEFAULT_IMGBB_API_KEY;
+  const baseUrl = (apiUrl || '').trim() || DEFAULT_IMGBB_API_URL;
+
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await fetch(`${baseUrl}?key=${encodeURIComponent(key)}`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+
+  let data = null;
+  try { data = await res.json(); }
+  catch (e) { throw new Error('সার্ভার রেসপন্স পড়া যায়নি'); }
+
+  if (!data || !data.success || !data.data || !data.data.url) {
+    const msg = (data && data.error && data.error.message) ? data.error.message : 'আপলোড ব্যর্থ';
+    throw new Error(msg);
+  }
+
+  return data.data.url;
 }
 
 /* ================================================================
@@ -405,7 +432,7 @@ function renderHeader() {
 function renderHome() {
   const page = document.getElementById('page-home');
   const catsHTML = state.categories.map(c =>
-    `<button class="cat-pill ripple ${c === activeCategory ? 'active' : ''}" data-cat="${esc(c)}" type="button">${esc(c)}</button>`
+    `<button class="cat-pill ${c === activeCategory ? 'active' : ''}" data-cat="${esc(c)}" type="button">${esc(c)}</button>`
   ).join('');
   const list = state.videos.filter(v => activeCategory === 'সব' || v.category === activeCategory);
   const L = state.settings.buttonLabels;
@@ -414,7 +441,7 @@ function renderHome() {
     : list.map(v => {
       const thumb = v.thumbnail ? `<img src="${esc(v.thumbnail)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
       const adTotal = getVideoAdCount(v);
-      return `<div class="video-card neon-card ripple" data-video-id="${esc(v.id)}">
+      return `<div class="video-card" data-video-id="${esc(v.id)}">
         <div class="video-thumb">
           <div class="thumb-fallback">🎬</div>${thumb}
           <div class="video-badge">${esc(v.category)}</div>
@@ -459,7 +486,7 @@ function renderReward() {
           <div class="reward-card-cost">🪙 ${r.coinCost}</div>
         </div>
         <div class="reward-card-actions">
-          <button class="btn-primary ripple" type="button" data-reward-action="unlock" data-reward-id="${esc(r.id)}" ${canAfford ? '' : 'disabled'}>
+          <button class="btn-primary" type="button" data-reward-action="unlock" data-reward-id="${esc(r.id)}" ${canAfford ? '' : 'disabled'}>
             ${esc(L.unlockReward)} ${canAfford ? '' : '(কয়েন কম)'}
           </button>
         </div>
@@ -467,14 +494,14 @@ function renderReward() {
     }).join('');
   page.innerHTML = `
     <div class="page-title-bar"><h2 class="page-title">রিওয়ার্ড</h2><p class="page-sub">অ্যাড দেখে কয়েন আয় করুন</p></div>
-    <div class="reward-hero neon-card">
+    <div class="reward-hero card">
       <div class="reward-hero-top"><span class="reward-hero-label">YOUR BALANCE</span><span class="reward-hero-label">UNLOCK GOAL ${goal}</span></div>
       <div class="reward-coin-balance"><span class="coin-ico">🪙</span> ${coins}</div>
       <div class="reward-progress-wrap">
         <div class="reward-progress-label"><span>আনলক প্রোগ্রেস</span><span>${coins} / ${goal}</span></div>
         <div class="reward-progress-bar"><div class="reward-progress-fill" style="width:${pct}%"></div></div>
       </div>
-      <button class="btn-primary ripple" type="button" id="btnEarnCoins">${esc(L.earnCoins)}</button>
+      <button class="btn-primary" type="button" id="btnEarnCoins">${esc(L.earnCoins)}</button>
     </div>
     <div class="reward-section-title">রিওয়ার্ড আইটেম</div>
     <div class="reward-list">${rewardsHTML}</div>`;
@@ -509,7 +536,7 @@ function openRewardChannelModal(reward) {
     title: esc(reward.title),
     bodyHTML: `<p class="modal-sub">আপনি সফলভাবে এই রিওয়ার্ডটি আনলক করেছেন। নিচের বাটনে ক্লিক করে চ্যানেলে জয়েন করুন।</p>
       <div class="reward-unlocked-box"><span class="unlock-check">✅</span> রিওয়ার্ড আনলকড</div>
-      <div class="modal-actions mt-3"><button class="btn-primary ripple" type="button" id="btnRewardJoin">${esc(L.joinReward)}</button></div>`,
+      <div class="modal-actions mt-3"><button class="btn-primary" type="button" id="btnRewardJoin">${esc(L.joinReward)}</button></div>`,
     onMount: (box) => {
       box.querySelector('#btnRewardJoin').addEventListener('click', () => openTelegramLink(reward.link));
     }
@@ -525,11 +552,11 @@ function renderChannel() {
   const s = state.settings;
   page.innerHTML = `
     <div class="page-title-bar"><h2 class="page-title">আমাদের চ্যানেল</h2><p class="page-sub">এক্সক্লুসিভ কনটেন্ট ও আপডেট</p></div>
-    <div class="channel-hero neon-card">
+    <div class="channel-hero card">
       <div class="channel-ico-wrap">📢</div>
       <h3 class="channel-title">${esc(s.channelTitle)}</h3>
       <p class="channel-desc">${esc(s.channelDesc)}</p>
-      <button class="btn-primary ripple" type="button" id="btnJoinChannel">${esc(L.joinChannel)}</button>
+      <button class="btn-primary" type="button" id="btnJoinChannel">${esc(L.joinChannel)}</button>
     </div>`;
   document.getElementById('btnJoinChannel').addEventListener('click', () => openTelegramLink(s.channelLink));
 }
@@ -543,7 +570,6 @@ function renderSettings() {
   const L = state.settings.buttonLabels;
   const coins = getUserCoins();
   const fakeUsers = state.settings.fakeUsers;
-
   const showAdmin = isAdminNow();
 
   const adminBannerHTML = showAdmin ? `
@@ -558,7 +584,7 @@ function renderSettings() {
 
   const previewToggleHTML = (!isInTelegram() && !showAdmin) ? `
     <div class="utility-list mt-4">
-      <button class="utility-item ripple" type="button" id="btnTogglePreviewAdmin">
+      <button class="utility-item" type="button" id="btnTogglePreviewAdmin">
         <span class="util-left"><span class="util-ico">🧪</span><span>Enable Admin (Preview Only)</span></span>
         <span class="util-chev">${localAdminPreview ? '✅' : '⬜'}</span>
       </button>
@@ -566,12 +592,12 @@ function renderSettings() {
 
   const avatarHTML = currentUser.photo_url
     ? `<img class="profile-avatar" src="${esc(currentUser.photo_url)}" alt="">`
-    : `<div class="profile-avatar" style="display:grid;place-items:center;font-size:24px;font-weight:800;color:#fff;">${esc((currentUser.first_name || 'U')[0].toUpperCase())}</div>`;
+    : `<div class="profile-avatar" style="display:grid;place-items:center;font-size:22px;font-weight:800;color:#2563EB;">${esc((currentUser.first_name || 'U')[0].toUpperCase())}</div>`;
 
   page.innerHTML = `
     <div class="page-title-bar"><h2 class="page-title">সেটিংস</h2><p class="page-sub">আপনার প্রোফাইল ও অপশন</p></div>
     ${adminBannerHTML}
-    <div class="profile-card neon-card">
+    <div class="profile-card card">
       <div class="profile-top">
         <div class="profile-avatar-wrap">${avatarHTML}</div>
         <div class="profile-info">
@@ -584,12 +610,12 @@ function renderSettings() {
         <div class="stat-box"><span class="stat-label">কয়েন</span><span class="stat-value">🪙 ${coins}</span></div>
         <div class="stat-box"><span class="stat-label">ব্যবহারকারী</span><span class="stat-value">${esc(fakeUsers)}</span></div>
       </div>
-      <button class="btn-primary ripple" type="button" id="btnShare">${esc(L.share)}</button>
+      <button class="btn-primary" type="button" id="btnShare">${esc(L.share)}</button>
     </div>
     <div class="utility-list">
-      <button class="utility-item ripple" type="button" id="btnGoChannel"><span class="util-left"><span class="util-ico">📢</span><span>আমাদের চ্যানেল</span></span><span class="util-chev">›</span></button>
-      <button class="utility-item ripple" type="button" id="btnGoReward"><span class="util-left"><span class="util-ico">🎁</span><span>রিওয়ার্ড সেন্টার</span></span><span class="util-chev">›</span></button>
-      <button class="utility-item ripple" type="button" id="btnAbout"><span class="util-left"><span class="util-ico">ℹ️</span><span>অ্যাপ সম্পর্কে</span></span><span class="util-chev">›</span></button>
+      <button class="utility-item" type="button" id="btnGoChannel"><span class="util-left"><span class="util-ico">📢</span><span>আমাদের চ্যানেল</span></span><span class="util-chev">›</span></button>
+      <button class="utility-item" type="button" id="btnGoReward"><span class="util-left"><span class="util-ico">🎁</span><span>রিওয়ার্ড সেন্টার</span></span><span class="util-chev">›</span></button>
+      <button class="utility-item" type="button" id="btnAbout"><span class="util-left"><span class="util-ico">ℹ️</span><span>অ্যাপ সম্পর্কে</span></span><span class="util-chev">›</span></button>
     </div>
     ${previewToggleHTML}`;
 
@@ -619,8 +645,8 @@ function openShareModal() {
     title: 'শেয়ার করুন',
     bodyHTML: `<p class="modal-sub">আপনার বন্ধুদের সাথে শেয়ার করুন এবং একসাথে ভিডিও উপভোগ করুন।</p>
       <div class="modal-actions">
-        <button class="btn-primary ripple" type="button" id="btnShareNative">${esc(L.share)} (Telegram)</button>
-        <button class="btn-ghost ripple" type="button" id="btnCopyLink">${esc(L.copyLink)}</button>
+        <button class="btn-primary" type="button" id="btnShareNative">${esc(L.share)} (Telegram)</button>
+        <button class="btn-ghost" type="button" id="btnCopyLink">${esc(L.copyLink)}</button>
       </div>`,
     onMount: (box) => {
       box.querySelector('#btnShareNative').addEventListener('click', () => {
@@ -669,18 +695,18 @@ function popOverlay() {
   const el = overlayStack.pop();
   if (!el) return;
   el.classList.remove('open');
-  setTimeout(() => el.remove(), 360);
+  setTimeout(() => el.remove(), 240);
 }
 function overlayHeaderHTML(title) {
   return `<div class="overlay-header">
-    <button class="overlay-back ripple" type="button" data-overlay-back>‹</button>
+    <button class="overlay-back" type="button" data-overlay-back>‹</button>
     <h3 class="overlay-title">${esc(title)}</h3></div>`;
 }
 function pushModal(opts) {
   const el = document.createElement('div');
   el.className = 'modal-screen';
   el.innerHTML = `<div class="modal-box">
-    <button class="modal-close-x ripple" type="button" data-modal-close aria-label="close">✕</button>
+    <button class="modal-close-x" type="button" data-modal-close aria-label="close">✕</button>
     <h3 class="modal-title">${opts.title || ''}</h3>${opts.bodyHTML || ''}</div>`;
   document.getElementById('overlayRoot').appendChild(el);
   modalStack.push(el);
@@ -696,11 +722,11 @@ function popModal(el) {
   if (idx === -1) return;
   modalStack.splice(idx, 1);
   el.classList.remove('open');
-  setTimeout(() => el.remove(), 300);
+  setTimeout(() => el.remove(), 200);
 }
 
 /* ================================================================
-   VIDEO MODAL — AD / UNLOCK FLOW (inter-ad countdown)
+   VIDEO MODAL — AD / UNLOCK FLOW (5s inter-ad delay)
    ================================================================ */
 let adFlowToken = 0;
 
@@ -720,8 +746,8 @@ function openVideoModal(videoId) {
       <p class="modal-sub" style="margin-top:-8px;">🎬 <b>${toBnDigits(adTotal)}</b> টি অ্যাড দেখে আনলক করুন · প্রতি অ্যাডের মাঝে <b>${toBnDigits(interDelay)}</b> সেকেন্ড বিরতি</p>
       <div id="videoAdArea"></div>
       <div class="modal-actions">
-        <button class="btn-primary ripple" type="button" id="btnStartAd">${esc(L.watchAd)}</button>
-        <button class="btn-ghost ripple" type="button" id="btnCoinUnlock" ${canUseCoins ? '' : 'disabled'}>${esc(L.unlockWithCoins)} (🪙 ${state.settings.unlockCoins})</button>
+        <button class="btn-primary" type="button" id="btnStartAd">${esc(L.watchAd)}</button>
+        <button class="btn-ghost" type="button" id="btnCoinUnlock" ${canUseCoins ? '' : 'disabled'}>${esc(L.unlockWithCoins)} (🪙 ${state.settings.unlockCoins})</button>
       </div>`,
     onMount: (box, root) => {
       const adArea = box.querySelector('#videoAdArea');
@@ -772,7 +798,7 @@ async function runAdFlow(v, adArea, btnStart, btnCoin, modalRoot) {
     <div class="ad-flow-wrap">
       <div class="ad-flow-head">
         <span id="adSlotLabel">Ad 1/${adCount}</span>
-        <span class="ad-flow-badge" id="adModeBadge">${esc(state.settings.adMode || 'sequential')}</span>
+        <span class="ad-flow-badge">${esc(state.settings.adMode || 'sequential')}</span>
       </div>
       <div class="ad-flow-bar"><div class="ad-flow-fill" id="adFill"></div></div>
       <div class="ad-flow-status" id="adStatus">অ্যাড লোড হচ্ছে…</div>
@@ -844,7 +870,7 @@ async function runAdFlow(v, adArea, btnStart, btnCoin, modalRoot) {
   adArea.innerHTML = `
     <div class="reward-unlocked-box mt-2"><span class="unlock-check">✅</span> ভিডিও আনলক হয়েছে</div>
     <div class="modal-actions">
-      <button class="btn-primary ripple" type="button" id="btnDeliverVideo">${esc(state.settings.buttonLabels.unlock)}</button>
+      <button class="btn-primary" type="button" id="btnDeliverVideo">${esc(state.settings.buttonLabels.unlock)}</button>
     </div>`;
 
   const btnDeliver = adArea.querySelector('#btnDeliverVideo');
@@ -881,7 +907,7 @@ function openEarnCoinsModal() {
     title: 'কয়েন আয় করুন',
     bodyHTML: `<p class="modal-sub">একটি অ্যাড দেখে <b>${state.settings.coinsPerAd}</b> কয়েন আয় করুন।</p>
       <div id="earnAdArea"></div>
-      <div class="modal-actions"><button class="btn-primary ripple" type="button" id="btnEarnStart">অ্যাড দেখুন</button></div>`,
+      <div class="modal-actions"><button class="btn-primary" type="button" id="btnEarnStart">অ্যাড দেখুন</button></div>`,
     onMount: (box) => {
       const area = box.querySelector('#earnAdArea');
       const btn = box.querySelector('#btnEarnStart');
@@ -939,7 +965,7 @@ function openAdminHub() {
     { key: 'labels', ico: '🔤', label: 'বাটন নাম পরিবর্তন' },
     { key: 'ban', ico: '🛡️', label: 'অ্যান্টি-চিট / ব্যান' }
   ];
-  const gridHTML = opts.map(o => `<button class="admin-hub-btn ripple" type="button" data-admin-page="${o.key}">
+  const gridHTML = opts.map(o => `<button class="admin-hub-btn" type="button" data-admin-page="${o.key}">
     <span class="admin-hub-ico">${o.ico}</span><span class="admin-hub-label">${o.label}</span></button>`).join('');
   const el = pushOverlay(`${overlayHeaderHTML('Admin Hub')}<div class="admin-hub-grid">${gridHTML}</div>`);
   el.querySelectorAll('[data-admin-page]').forEach(btn => btn.addEventListener('click', () => openAdminPage(btn.dataset.adminPage)));
@@ -977,7 +1003,7 @@ function adminDashboard() {
       <div class="admin-stat"><span class="as-label">ভিডিও ভিউ</span><span class="as-value">${a.totalVideosViewed}</span></div>
       <div class="admin-stat"><span class="as-label">আনুমানিক আয়</span><span class="as-value">$${revenue.toFixed(2)}</span></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">সারসংক্ষেপ</h4>
       <p class="modal-sub" style="margin:0">ক্যাটাগরি: <b>${state.categories.length}</b> · রিওয়ার্ড: <b>${state.rewards.length}</b> · ব্যান: <b>${state.bannedUsers.length}</b></p>
     </div>`);
@@ -989,7 +1015,7 @@ function adminDashboard() {
 function adminAdControl() {
   const s = state.settings;
   pushOverlay(`${overlayHeaderHTML('অ্যাড কন্ট্রোল')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <h4 class="admin-section-title">গ্লোবাল অ্যাড সেটিংস</h4>
       <div class="admin-field">
         <label>প্রতি ভিডিও ডিফল্ট অ্যাড সংখ্যা</label>
@@ -1005,10 +1031,10 @@ function adminAdControl() {
           <option value="sequential" ${s.adMode === 'sequential' ? 'selected' : ''}>সিকোয়েনশিয়াল (একে একে)</option>
         </select>
       </div>
-      <button class="btn-primary ripple" type="button" id="btnSaveAdControl">সেভ করুন</button>
+      <button class="btn-primary" type="button" id="btnSaveAdControl">সেভ করুন</button>
       <div class="admin-status-msg" id="acStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">সারসংক্ষেপ</h4>
       <p class="modal-sub" style="margin:0">প্রতিটি ভিডিওতে ডিফল্ট <b>${Number(s.defaultAdCount) || DEFAULT_AD_COUNT}</b> টি অ্যাড · প্রতি অ্যাডের মাঝে <b>${Number(s.interAdDelaySeconds) || DEFAULT_INTER_AD_DELAY_SECONDS}</b> সেকেন্ড বিরতি।</p>
     </div>`, {
@@ -1034,22 +1060,103 @@ function adminAdControl() {
 }
 
 /* ================================================================
-   ADMIN — UPLOAD (with per-video ad count)
+   ADMIN — UPLOAD (with ImgBB gallery upload + per-video ad count)
    ================================================================ */
 function adminUpload() {
   const catOpts = state.categories.filter(c => c !== 'সব').map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const apiKeyVal = esc(state.settings.imgbbApiKey || DEFAULT_IMGBB_API_KEY);
+
   pushOverlay(`${overlayHeaderHTML('ভিডিও আপলোড করুন')}
-    <div class="admin-panel-card neon-card">
-      <div class="admin-field"><label>শিরোনাম</label><input type="text" id="upTitle" placeholder="ভিডিওর শিরোনাম"></div>
-      <div class="admin-field"><label>থাম্বনেইল URL</label><input type="url" id="upThumb" placeholder="https://..."></div>
-      <div class="admin-field"><label>প্রাইভেট চ্যানেল মেসেজ লিংক / ID</label><input type="text" id="upMsg" placeholder="https://t.me/private_channel/123 অথবা 123"></div>
-      <div class="admin-field"><label>ক্যাটাগরি</label><select id="upCat">${catOpts}</select></div>
-      <div class="admin-field"><label>ম্যানুয়াল ভিউ</label><input type="number" id="upViews" min="0" value="0"></div>
-      <div class="admin-field"><label>প্রতি ভিডিওর অ্যাড সংখ্যা (খালি = গ্লোবাল ডিফল্ট)</label><input type="number" id="upAdCount" min="0" placeholder="খালি রাখলে ডিফল্ট ব্যবহার হবে"></div>
-      <button class="btn-primary ripple" type="button" id="btnUpload">ভিডিও আপলোড করুন</button>
+    <div class="admin-card">
+      <div class="admin-field">
+        <label>শিরোনাম</label>
+        <input type="text" id="upTitle" placeholder="ভিডিওর শিরোনাম">
+      </div>
+
+      <div class="admin-field">
+        <label>থাম্বনেইল</label>
+        <div class="imgbb-block">
+          <div class="imgbb-actions">
+            <button type="button" class="btn-secondary" id="btnPickGallery">🖼️ গ্যালারি থেকে ছবি নির্বাচন</button>
+            <input type="file" id="upGalleryInput" accept="image/*" style="display:none">
+          </div>
+          <div class="imgbb-status" id="upUploadStatus"></div>
+          <div class="imgbb-preview" id="upThumbPreview"></div>
+
+          <details class="imgbb-config-details">
+            <summary>ImgBB কনফিগ / সরাসরি URL</summary>
+            <label class="config-label">ImgBB API Key</label>
+            <input type="text" id="upImgbbApiKey" value="${apiKeyVal}">
+            <label class="config-label">অথবা সরাসরি থাম্বনেইল URL</label>
+            <input type="url" id="upThumb" placeholder="https://...">
+          </details>
+        </div>
+      </div>
+
+      <div class="admin-field">
+        <label>প্রাইভেট চ্যানেল মেসেজ লিংক / ID</label>
+        <input type="text" id="upMsg" placeholder="https://t.me/.../123 অথবা 123">
+      </div>
+
+      <div class="admin-field">
+        <label>ক্যাটাগরি</label>
+        <select id="upCat">${catOpts}</select>
+      </div>
+
+      <div class="admin-field">
+        <label>ম্যানুয়াল ভিউ</label>
+        <input type="number" id="upViews" min="0" value="0">
+      </div>
+
+      <div class="admin-field">
+        <label>প্রতি ভিডিওর অ্যাড সংখ্যা (খালি = গ্লোবাল ডিফল্ট)</label>
+        <input type="number" id="upAdCount" min="0" placeholder="খালি রাখলে ডিফল্ট ব্যবহার হবে">
+      </div>
+
+      <button class="btn-primary" type="button" id="btnUpload">ভিডিও আপলোড করুন</button>
       <div class="admin-status-msg" id="upStatus"></div>
     </div>`, {
     onMount: (root) => {
+      const btnPick = root.querySelector('#btnPickGallery');
+      const fileInput = root.querySelector('#upGalleryInput');
+      const uploadStatus = root.querySelector('#upUploadStatus');
+      const previewEl = root.querySelector('#upThumbPreview');
+      const apiKeyInput = root.querySelector('#upImgbbApiKey');
+      const thumbInput = root.querySelector('#upThumb');
+
+      btnPick.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        uploadStatus.textContent = '⏳ আপলোড হচ্ছে…';
+        uploadStatus.className = 'imgbb-status uploading';
+        previewEl.innerHTML = '';
+        try {
+          const url = await uploadThumbnailToImgBB(file, apiKeyInput.value, state.settings.imgbbApiUrl);
+          thumbInput.value = url;
+          previewEl.innerHTML = `<img src="${esc(url)}" alt="Thumbnail">`;
+          uploadStatus.textContent = '✅ সফলভাবে আপলোড হয়েছে';
+          uploadStatus.className = 'imgbb-status success';
+          if (apiKeyInput.value && apiKeyInput.value.trim() !== state.settings.imgbbApiKey) {
+            state.settings.imgbbApiKey = apiKeyInput.value.trim();
+            saveState();
+          }
+        } catch (err) {
+          uploadStatus.textContent = '❌ ' + (err && err.message ? err.message : 'আপলোড ব্যর্থ');
+          uploadStatus.className = 'imgbb-status error';
+        }
+      });
+
+      thumbInput.addEventListener('input', () => {
+        const url = thumbInput.value.trim();
+        if (url && /^https?:\/\//i.test(url)) {
+          previewEl.innerHTML = `<img src="${esc(url)}" alt="Thumbnail">`;
+        } else {
+          previewEl.innerHTML = '';
+        }
+      });
+
       root.querySelector('#btnUpload').addEventListener('click', () => {
         const status = root.querySelector('#upStatus');
         status.className = 'admin-status-msg';
@@ -1076,6 +1183,9 @@ function adminUpload() {
         root.querySelector('#upMsg').value = '';
         root.querySelector('#upViews').value = '0';
         root.querySelector('#upAdCount').value = '';
+        root.querySelector('#upThumbPreview').innerHTML = '';
+        root.querySelector('#upUploadStatus').textContent = '';
+        root.querySelector('#upGalleryInput').value = '';
         if (currentTab === 'home') renderHome();
       });
     }
@@ -1083,7 +1193,7 @@ function adminUpload() {
 }
 
 /* ================================================================
-   ADMIN — BULK ADS (all videos at once + overrides)
+   ADMIN — BULK ADS
    ================================================================ */
 function adminBulkAds() {
   const renderList = () => state.videos.map(v => {
@@ -1104,20 +1214,20 @@ function adminBulkAds() {
   }).join('') || `<div class="empty-state">কোন ভিডিও নেই</div>`;
 
   pushOverlay(`${overlayHeaderHTML('সব ভিডিওর অ্যাড কন্ট্রোল')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <h4 class="admin-section-title">সব ভিডিওতে একই অ্যাড সংখ্যা প্রয়োগ</h4>
       <div class="admin-field">
         <label>নতুন অ্যাড সংখ্যা</label>
         <input type="number" id="bulkAllValue" min="1" value="${Number(state.settings.defaultAdCount) || DEFAULT_AD_COUNT}">
       </div>
-      <button class="btn-primary ripple" type="button" id="btnApplyAll">সব ভিডিওতে প্রয়োগ করুন</button>
-      <button class="btn-ghost ripple" type="button" id="btnClearAll" style="margin-top:10px">সব ভিডিও থেকে কাস্টম সরান (ডিফল্টে ফিরে যান)</button>
+      <button class="btn-primary" type="button" id="btnApplyAll">সব ভিডিওতে প্রয়োগ করুন</button>
+      <button class="btn-ghost mt-2" type="button" id="btnClearAll">সব ভিডিও থেকে কাস্টম সরান (ডিফল্টে ফিরে যান)</button>
       <div class="admin-status-msg" id="bulkStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">ভিডিও-ভিত্তিক অ্যাড সংখ্যা</h4>
       <div id="bulkList">${renderList()}</div>
-      <button class="btn-primary ripple" type="button" id="btnSaveBulk" style="margin-top:10px">সব সেভ করুন</button>
+      <button class="btn-primary mt-3" type="button" id="btnSaveBulk">সব সেভ করুন</button>
     </div>`, {
     onMount: (root) => {
       const status = root.querySelector('#bulkStatus');
@@ -1175,11 +1285,11 @@ function adminManage() {
       <span class="row-title">${esc(v.title)}</span>
       <span class="row-sub">${esc(v.category)} · 👁 ${formatViews(v.views)} · msgId ${v.messageId || '—'} · ${v.adCount || 'ডিফল্ট'}</span>
     </div>
-    <div class="admin-row-actions"><button class="admin-mini-btn danger ripple" type="button" data-del="${esc(v.id)}">ডিলিট</button></div>
+    <div class="admin-row-actions"><button class="admin-mini-btn danger" type="button" data-del="${esc(v.id)}">ডিলিট</button></div>
   </div>`).join('') || `<div class="empty-state"><div class="empty-ico">🎬</div><div>কোন ভিডিও নেই</div></div>`;
 
   pushOverlay(`${overlayHeaderHTML('ভিডিও ম্যানেজ / ডিলিট')}
-    <div class="admin-panel-card neon-card"><div id="manageList">${render()}</div></div>`, {
+    <div class="admin-card"><div id="manageList">${render()}</div></div>`, {
     onMount: (root) => {
       root.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-del]');
@@ -1204,17 +1314,17 @@ function adminCategories() {
     return `<div class="admin-list-row">
       <div class="row-main"><span class="row-title">${esc(c)}</span></div>
       <div class="admin-row-actions">
-        ${locked ? '<span class="row-sub">default</span>' : `<button class="admin-mini-btn ripple" type="button" data-rename="${esc(c)}">রিনেম</button><button class="admin-mini-btn danger ripple" type="button" data-remove="${esc(c)}">ডিলিট</button>`}
+        ${locked ? '<span class="row-sub">default</span>' : `<button class="admin-mini-btn" type="button" data-rename="${esc(c)}">রিনেম</button><button class="admin-mini-btn danger" type="button" data-remove="${esc(c)}">ডিলিট</button>`}
       </div></div>`;
   }).join('');
 
   pushOverlay(`${overlayHeaderHTML('ক্যাটাগরি কন্ট্রোল')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <div class="admin-field"><label>নতুন ক্যাটাগরি</label><input type="text" id="catNew" placeholder="যেমন: টেকনোলজি"></div>
-      <button class="btn-primary ripple" type="button" id="btnAddCat">ক্যাটাগরি যোগ করুন</button>
+      <button class="btn-primary" type="button" id="btnAddCat">ক্যাটাগরি যোগ করুন</button>
       <div class="admin-status-msg" id="catStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">ক্যাটাগরি লিস্ট</h4>
       <div id="catList">${renderList()}</div>
     </div>`, {
@@ -1223,13 +1333,13 @@ function adminCategories() {
       const list = root.querySelector('#catList');
       root.querySelector('#btnAddCat').addEventListener('click', () => {
         const v = root.querySelector('#catNew').value.trim();
-        if (!v) { status.textContent = 'নাম দিন'; status.className = 'admin-status-msg err'; return; }
-        if (state.categories.includes(v)) { status.textContent = 'এই নাম আগে থেকেই আছে'; status.className = 'admin-status-msg err'; return; }
+        status.className = 'admin-status-msg';
+        if (!v) { status.textContent = 'নাম দিন'; status.classList.add('err'); return; }
+        if (state.categories.includes(v)) { status.textContent = 'এই নাম আগে থেকেই আছে'; status.classList.add('err'); return; }
         state.categories.push(v);
         saveState();
         root.querySelector('#catNew').value = '';
-        status.textContent = 'যোগ হয়েছে';
-        status.className = 'admin-status-msg ok';
+        status.textContent = 'যোগ হয়েছে'; status.classList.add('ok');
         list.innerHTML = renderList();
         if (currentTab === 'home') renderHome();
       });
@@ -1268,19 +1378,19 @@ function adminCategories() {
    ================================================================ */
 function adminFake() {
   pushOverlay(`${overlayHeaderHTML('ফেক ইউজার ও ভিউ সেটিংস')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <div class="admin-field"><label>ফেক ইউজার কাউন্ট</label><input type="text" id="fkUsers" value="${esc(state.settings.fakeUsers)}" placeholder="10,000+"></div>
-      <button class="btn-primary ripple" type="button" id="btnSaveFk">সেভ করুন</button>
+      <button class="btn-primary" type="button" id="btnSaveFk">সেভ করুন</button>
       <div class="admin-status-msg" id="fkStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">ভিডিও ভিউ অ্যাডজাস্ট</h4>
       <div id="fkViewsList">
         ${state.videos.map(v => `<div class="admin-list-row">
           <div class="row-main"><span class="row-title">${esc(v.title)}</span><span class="row-sub">বর্তমান: ${formatViews(v.views)}</span></div>
           <div class="admin-row-actions">
-            <button class="admin-mini-btn ripple" type="button" data-add-views="${esc(v.id)}">+ ভিউ</button>
-            <button class="admin-mini-btn ripple" type="button" data-set-views="${esc(v.id)}">সেট</button>
+            <button class="admin-mini-btn" type="button" data-add-views="${esc(v.id)}">+ ভিউ</button>
+            <button class="admin-mini-btn" type="button" data-set-views="${esc(v.id)}">সেট</button>
           </div></div>`).join('') || '<div class="empty-state">কোন ভিডিও নেই</div>'}
       </div>
     </div>`, {
@@ -1328,11 +1438,11 @@ function adminFake() {
 function adminCoinsSettings() {
   const s = state.settings;
   pushOverlay(`${overlayHeaderHTML('কয়েন ও ৩০-মিনিট টাইমার সেটিংস')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <div class="admin-field"><label>কয়েন প্রতি অ্যাড</label><input type="number" id="setCoins" min="1" value="${s.coinsPerAd}"></div>
       <div class="admin-field"><label>আনলক করতে কয়েন লাগবে</label><input type="number" id="setUnlock" min="1" value="${s.unlockCoins}"></div>
       <div class="admin-field"><label>অটো-ডিলিট টাইমার (মিনিট)</label><input type="number" id="setTimer" min="1" value="${s.autoDeleteMinutes}"></div>
-      <button class="btn-primary ripple" type="button" id="btnSaveAds">সেভ করুন</button>
+      <button class="btn-primary" type="button" id="btnSaveAds">সেভ করুন</button>
       <div class="admin-status-msg" id="adsStatus"></div>
     </div>`, {
     onMount: (root) => {
@@ -1366,18 +1476,18 @@ function adminChannelReward() {
   const s = state.settings;
   const rewardsListHTML = () => state.rewards.map(r => `<div class="admin-list-row">
     <div class="row-main"><span class="row-title">${esc(r.title)}</span><span class="row-sub">${r.type} · 🪙 ${r.coinCost}</span></div>
-    <div class="admin-row-actions"><button class="admin-mini-btn danger ripple" type="button" data-del-reward="${esc(r.id)}">ডিলিট</button></div>
+    <div class="admin-row-actions"><button class="admin-mini-btn danger" type="button" data-del-reward="${esc(r.id)}">ডিলিট</button></div>
   </div>`).join('') || `<div class="empty-state">কোন রিওয়ার্ড নেই</div>`;
 
   pushOverlay(`${overlayHeaderHTML('চ্যানেল ও রিওয়ার্ড সেটিংস')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <div class="admin-field"><label>চ্যানেল টাইটেল</label><input type="text" id="chTitle" value="${esc(s.channelTitle)}"></div>
       <div class="admin-field"><label>চ্যানেল লিংক</label><input type="url" id="chLink" value="${esc(s.channelLink)}"></div>
       <div class="admin-field"><label>চ্যানেল বর্ণনা</label><input type="text" id="chDesc" value="${esc(s.channelDesc)}"></div>
-      <button class="btn-primary ripple" type="button" id="btnSaveCh">সেভ করুন</button>
+      <button class="btn-primary" type="button" id="btnSaveCh">সেভ করুন</button>
       <div class="admin-status-msg" id="chStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">নতুন রিওয়ার্ড</h4>
       <div class="admin-field"><label>টাইটেল</label><input type="text" id="rwTitle" placeholder="রিওয়ার্ড নাম"></div>
       <div class="admin-field"><label>বর্ণনা</label><input type="text" id="rwDesc" placeholder="সংক্ষিপ্ত বর্ণনা"></div>
@@ -1385,10 +1495,10 @@ function adminChannelReward() {
       <div class="admin-field"><label>কয়েন কস্ট</label><input type="number" id="rwCost" min="1" value="300"></div>
       <div class="admin-field"><label>লিংক (চ্যানেলের জন্য)</label><input type="url" id="rwLink" placeholder="https://t.me/..."></div>
       <div class="admin-field"><label>ভিডিও (ভিডিও টাইপ হলে)</label><select id="rwVideo"><option value="">— কোনটি —</option>${state.videos.map(v => `<option value="${esc(v.id)}">${esc(v.title)}</option>`).join('')}</select></div>
-      <button class="btn-primary ripple" type="button" id="btnAddReward">রিওয়ার্ড যোগ করুন</button>
+      <button class="btn-primary" type="button" id="btnAddReward">রিওয়ার্ড যোগ করুন</button>
       <div class="admin-status-msg" id="rwStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">রিওয়ার্ড লিস্ট</h4>
       <div id="rewardList">${rewardsListHTML()}</div>
     </div>`, {
@@ -1452,8 +1562,8 @@ function adminLabels() {
   ];
   const fieldHTML = fields.map(([k, l]) => `<div class="admin-field"><label>${esc(l)}</label><input type="text" data-label-key="${k}" value="${esc(L[k] || '')}"></div>`).join('');
   pushOverlay(`${overlayHeaderHTML('বাটন নাম পরিবর্তন')}
-    <div class="admin-panel-card neon-card">${fieldHTML}
-      <button class="btn-primary ripple" type="button" id="btnSaveLabels">সেভ করুন</button>
+    <div class="admin-card">${fieldHTML}
+      <button class="btn-primary" type="button" id="btnSaveLabels">সেভ করুন</button>
       <div class="admin-status-msg" id="lbStatus"></div>
     </div>`, {
     onMount: (root) => {
@@ -1482,16 +1592,16 @@ function adminBan() {
     ? `<div class="empty-state">কোন ব্যানকৃত ইউজার নেই</div>`
     : state.bannedUsers.map(id => `<div class="admin-list-row">
       <div class="row-main"><span class="row-title">#${esc(id)}</span></div>
-      <div class="admin-row-actions"><button class="admin-mini-btn ripple" type="button" data-unban="${esc(id)}">আনব্যান</button></div>
+      <div class="admin-row-actions"><button class="admin-mini-btn" type="button" data-unban="${esc(id)}">আনব্যান</button></div>
     </div>`).join('');
 
   pushOverlay(`${overlayHeaderHTML('অ্যান্টি-চিট / ইউজার ব্যান')}
-    <div class="admin-panel-card neon-card">
+    <div class="admin-card">
       <div class="admin-field"><label>Telegram Numeric ID</label><input type="number" id="banId" placeholder="123456789"></div>
-      <button class="btn-primary ripple btn-danger" type="button" id="btnBan">ব্যান করুন</button>
+      <button class="btn-primary btn-danger" type="button" id="btnBan">ব্যান করুন</button>
       <div class="admin-status-msg" id="bnStatus"></div>
     </div>
-    <div class="admin-panel-card neon-card mt-3">
+    <div class="admin-card mt-3">
       <h4 class="admin-section-title">ব্যানকৃত ইউজার</h4>
       <div id="banList">${renderList()}</div>
     </div>`, {
@@ -1581,7 +1691,7 @@ async function boot() {
     }
   }
 
-  // Late-arriving Telegram user data — re-check for ~20s
+  // Late-arriving Telegram user data — re-check quietly for ~20s
   let attempts = 0;
   const pollUser = setInterval(() => {
     attempts++;
