@@ -87,46 +87,45 @@ let localAdminPreview = false;
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
 /* ================================================================
-   ID NORMALIZATION + ADMIN CHECK
+   ID NORMALIZATION + ADMIN CHECK (critical fix)
    ================================================================ */
 function normalizeId(v) {
   if (v === null || v === undefined) return '';
   return String(v).trim();
 }
 
-function isAdminUser(u) {
-  if (!u) return false;
-  return normalizeId(u.id) === ADMIN_NUMERIC_ID_STR;
+function readTelegramUserId() {
+  try {
+    const u = window.Telegram && window.Telegram.WebApp
+      && window.Telegram.WebApp.initDataUnsafe
+      && window.Telegram.WebApp.initDataUnsafe.user;
+    if (!u) return '';
+    if (u.id === null || u.id === undefined) return '';
+    return String(u.id).trim();
+  } catch (e) {
+    return '';
+  }
 }
 
-function isAdmin() {
-  return isAdminUser(currentUser);
+function getActiveUserId() {
+  const tgId = readTelegramUserId();
+  if (tgId === ADMIN_NUMERIC_ID_STR) return ADMIN_NUMERIC_ID_STR;
+  const cur = normalizeId(currentUser ? currentUser.id : '');
+  if (cur === ADMIN_NUMERIC_ID_STR) return ADMIN_NUMERIC_ID_STR;
+  if (cur) return cur;
+  return tgId;
+}
+
+function isAdminNow() {
+  const tgId = readTelegramUserId();
+  if (tgId === ADMIN_NUMERIC_ID_STR) return true;
+  const cur = normalizeId(currentUser ? currentUser.id : '');
+  if (cur === ADMIN_NUMERIC_ID_STR) return true;
+  return false;
 }
 
 function isInTelegram() {
   return !!(currentUser && currentUser.inTelegram === true);
-}
-
-function canSeeAdmin() {
-  if (isAdminUser(currentUser)) return true;
-  if (!isInTelegram() && localAdminPreview) return true;
-  return false;
-}
-
-function refreshUserFromTelegram() {
-  if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return;
-  const u = tg.initDataUnsafe.user;
-  if (!u) return;
-  const uid = u.id;
-  if (uid === null || uid === undefined) return;
-  currentUser = {
-    id: uid,
-    first_name: u.first_name || '',
-    last_name: u.last_name || '',
-    username: u.username || '',
-    photo_url: u.photo_url || '',
-    inTelegram: true
-  };
 }
 
 function isBanned() {
@@ -136,6 +135,26 @@ function isBanned() {
 
 function getUserCoins() { return Number(coinsMap[currentUser.id] || 0); }
 function setUserCoins(v) { coinsMap[currentUser.id] = Math.max(0, Math.floor(v)); saveCoins(); }
+
+/* ================================================================
+   TELEGRAM USER REFRESH
+   ================================================================ */
+function refreshUserFromTelegram() {
+  if (!tg || !tg.initDataUnsafe || !tg.initDataUnsafe.user) return false;
+  const u = tg.initDataUnsafe.user;
+  if (!u || u.id === null || u.id === undefined) return false;
+  const prevId = currentUser ? normalizeId(currentUser.id) : '';
+  const newId = normalizeId(u.id);
+  currentUser = {
+    id: u.id,
+    first_name: u.first_name || '',
+    last_name: u.last_name || '',
+    username: u.username || '',
+    photo_url: u.photo_url || '',
+    inTelegram: true
+  };
+  return prevId !== newId;
+}
 
 /* ================================================================
    FIREBASE INIT
@@ -225,9 +244,12 @@ function initTelegram() {
       tg.expand();
       if (tg.setHeaderColor) tg.setHeaderColor('#07070d');
       if (tg.setBackgroundColor) tg.setBackgroundColor('#07070d');
+      if (typeof tg.onEvent === 'function') {
+        try { tg.onEvent('themeChanged', () => { /* no-op re-render hook */ }); } catch (e) {}
+      }
     } catch (e) {}
   }
-  refreshUserFromTelegram();
+  const changed = refreshUserFromTelegram();
   if (!currentUser) {
     currentUser = {
       id: 100000001,
@@ -238,6 +260,7 @@ function initTelegram() {
       inTelegram: false
     };
   }
+  return changed;
 }
 
 /* ================================================================
@@ -253,6 +276,10 @@ function formatViews(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
   return String(n);
+}
+function toBnDigits(n) {
+  const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(n).replace(/[0-9]/g, d => bn[Number(d)]);
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function uid(p) { return (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -281,7 +308,7 @@ function toast(msg, type) {
 
 function attachRipple() {
   document.addEventListener('click', (e) => {
-    const target = e.target.closest('.ripple, .btn-primary, .btn-ghost, .btn-unlock, .cat-pill, .video-card, .nav-btn, .admin-hub-btn, .admin-mini-btn, .utility-item, .overlay-back, .modal-close-x');
+    const target = e.target.closest('.ripple, .btn-primary, .btn-ghost, .btn-unlock, .cat-pill, .video-card, .nav-btn, .admin-hub-btn, .admin-mini-btn, .utility-item, .overlay-back, .modal-close-x, .admin-entry-banner');
     if (!target) return;
     const rect = target.getBoundingClientRect();
     const size = Math.max(rect.width, rect.height) * 1.2;
@@ -391,7 +418,7 @@ function renderHome() {
         <div class="video-thumb">
           <div class="thumb-fallback">🎬</div>${thumb}
           <div class="video-badge">${esc(v.category)}</div>
-          <div class="video-badge-ad">🎬 ${adTotal} অ্যাড</div>
+          <div class="video-badge-ad">🎬 ${toBnDigits(adTotal)} অ্যাড</div>
           <div class="thumb-play"><div class="thumb-play-btn">▶</div></div>
         </div>
         <div class="video-info">
@@ -508,7 +535,7 @@ function renderChannel() {
 }
 
 /* ================================================================
-   SETTINGS
+   SETTINGS — Admin banner always on top when ID matches
    ================================================================ */
 function renderSettings() {
   refreshUserFromTelegram();
@@ -517,15 +544,19 @@ function renderSettings() {
   const coins = getUserCoins();
   const fakeUsers = state.settings.fakeUsers;
 
-  const canSee = canSeeAdmin();
-  const adminHTML = canSee ? `
-    <div class="utility-list mt-4">
-      <button class="utility-item ripple" type="button" id="btnOpenAdmin" style="background:linear-gradient(135deg, rgba(255,0,128,0.18), rgba(138,43,226,0.18)); border-color: rgba(255,0,128,0.4);">
-        <span class="util-left"><span class="util-ico">🛡️</span><span>Admin Panel</span></span><span class="util-chev">›</span>
-      </button>
-    </div>` : '';
+  const showAdmin = isAdminNow();
 
-  const previewToggleHTML = (!isInTelegram()) ? `
+  const adminBannerHTML = showAdmin ? `
+    <button class="admin-entry-banner" type="button" id="btnOpenAdmin">
+      <div class="admin-entry-icon">🛡️</div>
+      <div class="admin-entry-text">
+        <div class="admin-entry-title">Admin Panel</div>
+        <div class="admin-entry-sub">সব কন্ট্রোল এখানে · ID: ${esc(normalizeId(currentUser.id))}</div>
+      </div>
+      <div class="admin-entry-chev">›</div>
+    </button>` : '';
+
+  const previewToggleHTML = (!isInTelegram() && !showAdmin) ? `
     <div class="utility-list mt-4">
       <button class="utility-item ripple" type="button" id="btnTogglePreviewAdmin">
         <span class="util-left"><span class="util-ico">🧪</span><span>Enable Admin (Preview Only)</span></span>
@@ -539,13 +570,14 @@ function renderSettings() {
 
   page.innerHTML = `
     <div class="page-title-bar"><h2 class="page-title">সেটিংস</h2><p class="page-sub">আপনার প্রোফাইল ও অপশন</p></div>
+    ${adminBannerHTML}
     <div class="profile-card neon-card">
       <div class="profile-top">
         <div class="profile-avatar-wrap">${avatarHTML}</div>
         <div class="profile-info">
           <div class="profile-name">${esc([currentUser.first_name, currentUser.last_name].filter(Boolean).join(' ') || 'Guest')}</div>
           <div class="profile-username">${currentUser.username ? '@' + esc(currentUser.username) : '—'}</div>
-          <span class="profile-id-badge">ID: ${currentUser.id}</span>
+          <span class="profile-id-badge">ID: ${esc(normalizeId(currentUser.id))}</span>
         </div>
       </div>
       <div class="profile-stats">
@@ -559,7 +591,6 @@ function renderSettings() {
       <button class="utility-item ripple" type="button" id="btnGoReward"><span class="util-left"><span class="util-ico">🎁</span><span>রিওয়ার্ড সেন্টার</span></span><span class="util-chev">›</span></button>
       <button class="utility-item ripple" type="button" id="btnAbout"><span class="util-left"><span class="util-ico">ℹ️</span><span>অ্যাপ সম্পর্কে</span></span><span class="util-chev">›</span></button>
     </div>
-    ${adminHTML}
     ${previewToggleHTML}`;
 
   document.getElementById('btnShare').addEventListener('click', openShareModal);
@@ -669,7 +700,7 @@ function popModal(el) {
 }
 
 /* ================================================================
-   VIDEO MODAL — AD / UNLOCK FLOW
+   VIDEO MODAL — AD / UNLOCK FLOW (inter-ad countdown)
    ================================================================ */
 let adFlowToken = 0;
 
@@ -686,7 +717,7 @@ function openVideoModal(videoId) {
   pushModal({
     title: esc(v.title),
     bodyHTML: `<p class="modal-sub"><span class="video-cat">${esc(v.category)}</span> &nbsp;·&nbsp; 👁 ${formatViews(v.views)} views</p>
-      <p class="modal-sub" style="margin-top:-8px;">🎬 <b>${adTotal}</b> টি অ্যাড দেখে আনলক করুন · প্রতি অ্যাডের মাঝে <b>${interDelay}</b> সেকেন্ড বিরতি</p>
+      <p class="modal-sub" style="margin-top:-8px;">🎬 <b>${toBnDigits(adTotal)}</b> টি অ্যাড দেখে আনলক করুন · প্রতি অ্যাডের মাঝে <b>${toBnDigits(interDelay)}</b> সেকেন্ড বিরতি</p>
       <div id="videoAdArea"></div>
       <div class="modal-actions">
         <button class="btn-primary ripple" type="button" id="btnStartAd">${esc(L.watchAd)}</button>
@@ -715,13 +746,13 @@ async function runInterAdCountdown(countdownArea, seconds, token) {
   countdownArea.innerHTML = `
     <div class="inter-ad-countdown">
       <div class="countdown-label">পরবর্তী অ্যাড শুরু হবে</div>
-      <div class="countdown-number" id="countNum">${seconds}</div>
+      <div class="countdown-number" id="countNum">${toBnDigits(seconds)}</div>
       <div class="countdown-label">সেকেন্ডে</div>
     </div>`;
   const numEl = countdownArea.querySelector('#countNum');
   for (let s = seconds; s > 0; s--) {
     if (token !== adFlowToken) return false;
-    if (numEl) numEl.textContent = s;
+    if (numEl) numEl.textContent = toBnDigits(s);
     await sleep(1000);
   }
   if (token !== adFlowToken) return false;
@@ -894,7 +925,7 @@ function openEarnCoinsModal() {
    ADMIN HUB
    ================================================================ */
 function openAdminHub() {
-  if (!canSeeAdmin()) return;
+  if (!isAdminNow()) return;
   const opts = [
     { key: 'dashboard', ico: '📊', label: 'ড্যাশবোর্ড' },
     { key: 'adcontrol', ico: '🎬', label: 'অ্যাড কন্ট্রোল' },
@@ -903,7 +934,7 @@ function openAdminHub() {
     { key: 'manage', ico: '🗑️', label: 'ভিডিও ডিলিট / ম্যানেজ' },
     { key: 'categories', ico: '🏷️', label: 'ক্যাটাগরি কন্ট্রোল' },
     { key: 'fake', ico: '👥', label: 'ফেক ইউজার ও ভিউ' },
-    { key: 'ads', ico: '⚙️', label: 'কয়েন ও অটো-ডিলিট' },
+    { key: 'ads', ico: '⚙️', label: 'কয়েন ও ৩০-মিনিট টাইমার' },
     { key: 'channel', ico: '📢', label: 'চ্যানেল ও রিওয়ার্ড' },
     { key: 'labels', ico: '🔤', label: 'বাটন নাম পরিবর্তন' },
     { key: 'ban', ico: '🛡️', label: 'অ্যান্টি-চিট / ব্যান' }
@@ -915,7 +946,7 @@ function openAdminHub() {
 }
 
 function openAdminPage(key) {
-  if (!canSeeAdmin()) return;
+  if (!isAdminNow()) return;
   switch (key) {
     case 'dashboard': return adminDashboard();
     case 'adcontrol': return adminAdControl();
@@ -1003,7 +1034,7 @@ function adminAdControl() {
 }
 
 /* ================================================================
-   ADMIN — UPLOAD
+   ADMIN — UPLOAD (with per-video ad count)
    ================================================================ */
 function adminUpload() {
   const catOpts = state.categories.filter(c => c !== 'সব').map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
@@ -1052,7 +1083,7 @@ function adminUpload() {
 }
 
 /* ================================================================
-   ADMIN — BULK ADS
+   ADMIN — BULK ADS (all videos at once + overrides)
    ================================================================ */
 function adminBulkAds() {
   const renderList = () => state.videos.map(v => {
@@ -1296,7 +1327,7 @@ function adminFake() {
    ================================================================ */
 function adminCoinsSettings() {
   const s = state.settings;
-  pushOverlay(`${overlayHeaderHTML('কয়েন ও অটো-ডিলিট সেটিংস')}
+  pushOverlay(`${overlayHeaderHTML('কয়েন ও ৩০-মিনিট টাইমার সেটিংস')}
     <div class="admin-panel-card neon-card">
       <div class="admin-field"><label>কয়েন প্রতি অ্যাড</label><input type="number" id="setCoins" min="1" value="${s.coinsPerAd}"></div>
       <div class="admin-field"><label>আনলক করতে কয়েন লাগবে</label><input type="number" id="setUnlock" min="1" value="${s.unlockCoins}"></div>
@@ -1549,6 +1580,22 @@ async function boot() {
       if (currentTab === 'settings') renderSettings();
     }
   }
+
+  // Late-arriving Telegram user data — re-check for ~20s
+  let attempts = 0;
+  const pollUser = setInterval(() => {
+    attempts++;
+    const wasInTg = currentUser ? currentUser.inTelegram : false;
+    const prevId = currentUser ? normalizeId(currentUser.id) : '';
+    const changed = refreshUserFromTelegram();
+    const nowInTg = currentUser ? currentUser.inTelegram : false;
+    const newId = currentUser ? normalizeId(currentUser.id) : '';
+    if (changed || (!wasInTg && nowInTg) || prevId !== newId) {
+      renderHeader();
+      if (currentTab === 'settings') renderSettings();
+    }
+    if (attempts >= 40) clearInterval(pollUser);
+  }, 500);
 }
 
 document.addEventListener('DOMContentLoaded', boot);
