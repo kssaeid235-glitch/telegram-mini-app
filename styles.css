@@ -112,6 +112,74 @@ img { display: block; max-width: 100%; }
 }
 @keyframes neonRotate { to { --neon-angle: 360deg; } }
 
+/* ============ Admin Entry Banner (top of Settings) ============ */
+.admin-entry-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255,0,128,0.28), rgba(138,43,226,0.28), rgba(64,224,208,0.22));
+  border: 1.5px solid rgba(255,0,128,0.55);
+  box-shadow: 0 8px 30px -10px rgba(255,0,128,0.6), 0 0 26px -6px rgba(138,43,226,0.55), inset 0 1px 0 rgba(255,255,255,0.15);
+  transition: transform 0.24s cubic-bezier(.2,.9,.3,1), box-shadow 0.28s ease;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text);
+}
+.admin-entry-banner:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 38px -8px rgba(255,0,128,0.75), 0 0 34px -4px rgba(138,43,226,0.7), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.admin-entry-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff0080, #ffed4a, #40e0d0, transparent);
+  background-size: 200% 100%;
+  animation: tagShift 2.4s linear infinite;
+}
+.admin-entry-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex: 0 0 auto;
+  background: linear-gradient(135deg, #8a2be2, #ff0080);
+  box-shadow: 0 0 22px -4px rgba(255,0,128,0.85), inset 0 0 14px rgba(255,255,255,0.22);
+}
+.admin-entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.admin-entry-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.2px;
+}
+.admin-entry-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+.admin-entry-chev {
+  font-size: 22px;
+  color: rgba(255,255,255,0.7);
+  flex: 0 0 auto;
+}
+
+/* ============ Video feed ============ */
 .video-feed { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }
 .video-card { display: flex; flex-direction: column; overflow: hidden; cursor: pointer;
   transition: transform 0.32s cubic-bezier(.2,.9,.3,1); border-radius: var(--radius-lg); position: relative;
@@ -374,50 +442,28 @@ img { display: block; max-width: 100%; }
 }
 .ad-flow-status { text-align: center; font-size: 12px; color: var(--text-dim); font-weight: 500; }
 
-/* Inter-ad countdown */
-.inter-ad-countdown {
-  padding: 20px 16px;
-  text-align: center;
+.inter-ad-countdown { padding: 20px 16px; text-align: center;
   background: linear-gradient(135deg, rgba(138,43,226,0.16), rgba(255,0,128,0.1));
-  border-radius: 16px;
-  border: 1px solid rgba(138,43,226,0.42);
-  margin-top: 10px;
+  border-radius: 16px; border: 1px solid rgba(138,43,226,0.42); margin-top: 10px;
   box-shadow: inset 0 0 24px rgba(138,43,226,0.18), 0 0 22px -8px rgba(255,0,128,0.55);
   animation: pageEnter 0.35s ease both;
 }
 .countdown-label { font-size: 11.5px; color: var(--text-dim); letter-spacing: 0.6px; font-weight: 600; }
-.countdown-number {
-  font-size: 54px;
-  font-weight: 800;
-  line-height: 1;
-  margin: 8px 0;
+.countdown-number { font-size: 54px; font-weight: 800; line-height: 1; margin: 8px 0;
   background: linear-gradient(120deg, #ffed4a, #ff0080, #8a2be2);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  background-size: 220% 100%;
-  animation: titleShift 1.6s linear infinite;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  background-size: 220% 100%; animation: titleShift 1.6s linear infinite;
   filter: drop-shadow(0 0 22px rgba(255,0,128,0.6));
 }
-.ad-slot-indicator {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-.ad-slot-dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: rgba(255,255,255,0.14);
-  border: 1px solid rgba(180,180,255,0.3);
+.ad-slot-indicator { display: flex; justify-content: center; gap: 6px; margin-top: 6px; }
+.ad-slot-dot { width: 9px; height: 9px; border-radius: 50%;
+  background: rgba(255,255,255,0.14); border: 1px solid rgba(180,180,255,0.3);
   transition: all 0.3s ease;
 }
-.ad-slot-dot.active {
-  background: linear-gradient(135deg, #ff0080, #8a2be2);
-  box-shadow: 0 0 10px rgba(255,0,128,0.7);
-  transform: scale(1.2);
+.ad-slot-dot.active { background: linear-gradient(135deg, #ff0080, #8a2be2);
+  box-shadow: 0 0 10px rgba(255,0,128,0.7); transform: scale(1.2);
 }
-.ad-slot-dot.done {
-  background: linear-gradient(135deg, #22e07a, #40e0d0);
+.ad-slot-dot.done { background: linear-gradient(135deg, #22e07a, #40e0d0);
   box-shadow: 0 0 8px rgba(34,224,122,0.6);
 }
 
