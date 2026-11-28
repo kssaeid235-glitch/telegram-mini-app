@@ -10,6 +10,7 @@ const BOT_2_USERNAME = 'FileStoragebdbot';
 const STORAGE_CHANNEL_ID = -1005626980298;
 const MINI_APP_URL = 'https://telegram-mini-app.kssaeid235.workers.dev';
 const MINI_APP_DIRECT_LINK = 'https://t.me/Viral_Video_app_bot/myapp';
+const BOT_SERVER_URL = 'https://viral-video-bots-wjd9.onrender.com';
 const DEFAULT_FAKE_USERS = '10,000+';
 const DEFAULT_COINS_PER_AD = 10;
 const DEFAULT_UNLOCK_COINS = 500;
@@ -20,8 +21,8 @@ const DEFAULT_INTER_AD_DELAY_SECONDS = 5;
 const DEFAULT_IMGBB_API_KEY = '07beebdc2b5c76020dde2c70cc81835d';
 const DEFAULT_IMGBB_API_URL = 'https://api.imgbb.com/1/upload';
 
-const STORAGE_KEY = 'vva_state_v2';
-const COIN_STORE_KEY = 'vva_coins_v2';
+const STORAGE_KEY = 'vva_state_v3';
+const COIN_STORE_KEY = 'vva_coins_v3';
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 
 /* ================================================================
@@ -43,10 +44,10 @@ let fbApp = null, fbDb = null, fbAuth = null, fbReady = false;
    ================================================================ */
 const DEFAULT_STATE = {
   videos: [
-    { id: 'v_demo_1', title: 'অসাধারণ ট্রিকস ভিডিও — অবাক হয়ে যাবেন!', category: 'মজার', views: 12450, thumbnail: '', messageLink: 'https://t.me/private_channel/12', messageId: 12, adCount: null },
-    { id: 'v_demo_2', title: 'মোবাইল দিয়ে এই ৫টি কাজ শিখুন — জীবন বদলে যাবে', category: 'শিক্ষা', views: 8720, thumbnail: '', messageLink: 'https://t.me/private_channel/15', messageId: 15, adCount: null },
-    { id: 'v_demo_3', title: 'TOP 10 গেমিং হাইলাইটস — মিস করবেন না!', category: 'গেমিং', views: 32100, thumbnail: '', messageLink: 'https://t.me/private_channel/21', messageId: 21, adCount: null },
-    { id: 'v_demo_4', title: 'প্রিমিয়াম মোটিভেশন ভিডিও — আজই দেখুন', category: 'বিনোদন', views: 5890, thumbnail: '', messageLink: 'https://t.me/private_channel/27', messageId: 27, adCount: null }
+    { id: 'v_demo_1', title: 'অসাধারণ ট্রিকস ভিডিও — অবাক হয়ে যাবেন!', category: 'মজার', views: 12450, thumbnail: '', refType: 'message_id', refValue: 12, messageId: 12, messageLink: 'https://t.me/c/5626980298/12', adCount: null },
+    { id: 'v_demo_2', title: 'মোবাইল দিয়ে এই ৫টি কাজ শিখুন — জীবন বদলে যাবে', category: 'শিক্ষা', views: 8720, thumbnail: '', refType: 'message_id', refValue: 15, messageId: 15, messageLink: 'https://t.me/c/5626980298/15', adCount: null },
+    { id: 'v_demo_3', title: 'TOP 10 গেমিং হাইলাইটস — মিস করবেন না!', category: 'গেমিং', views: 32100, thumbnail: '', refType: 'message_id', refValue: 21, messageId: 21, messageLink: 'https://t.me/c/5626980298/21', adCount: null },
+    { id: 'v_demo_4', title: 'প্রিমিয়াম মোটিভেশন ভিডিও — আজই দেখুন', category: 'বিনোদন', views: 5890, thumbnail: '', refType: 'message_id', refValue: 27, messageId: 27, messageLink: 'https://t.me/c/5626980298/27', adCount: null }
   ],
   categories: ['সব', 'মজার', 'শিক্ষা', 'বিনোদন', 'টেক', 'গেমিং'],
   settings: {
@@ -154,6 +155,46 @@ function refreshUserFromTelegram() {
 }
 
 /* ================================================================
+   VIDEO REFERENCE PARSER (multi-format)
+   ================================================================ */
+function parseVideoRef(raw) {
+  if (raw === null || raw === undefined) return { type: 'none', value: null };
+  const s = String(raw).trim();
+  if (!s) return { type: 'none', value: null };
+
+  // 1. Telegram file_id (BAAC, BQAC, AAMC, AgAC, CgAC, CAAC, or any 40+ char alnum string)
+  if (/^[A-Za-z0-9_-]{40,}$/.test(s) && !/^https?:\/\//i.test(s)) {
+    return { type: 'file_id', value: s };
+  }
+
+  // 2. https://t.me/c/<channel>/<msgId>  OR  https://t.me/<channel>/<msgId>
+  const linkMatch = s.match(/t\.me\/(?:c\/)?[\w-]+\/(\d+)(?:\/)?$/);
+  if (linkMatch) {
+    return { type: 'message_id', value: parseInt(linkMatch[1], 10) };
+  }
+
+  // 3. <channel_id>:<message_id>  (e.g. -1005626980298:4)
+  const pairMatch = s.match(/^(-?\d+)\s*:\s*(\d+)$/);
+  if (pairMatch) {
+    return { type: 'message_id', value: parseInt(pairMatch[2], 10) };
+  }
+
+  // 4. Pure numeric message id
+  if (/^-?\d+$/.test(s)) {
+    return { type: 'message_id', value: parseInt(s, 10) };
+  }
+
+  return { type: 'invalid', value: s };
+}
+
+function videoRefLabel(v) {
+  if (!v) return '—';
+  if (v.refType === 'file_id') return 'file_id';
+  if (v.refType === 'message_id') return 'msgId ' + (v.refValue || v.messageId || '—');
+  return '—';
+}
+
+/* ================================================================
    FIREBASE INIT
    ================================================================ */
 async function initFirebase() {
@@ -185,7 +226,12 @@ function mergeState(remote) {
   if (!Array.isArray(merged.categories)) merged.categories = structuredClone(DEFAULT_STATE.categories);
   if (!Array.isArray(merged.rewards)) merged.rewards = [];
   if (!Array.isArray(merged.bannedUsers)) merged.bannedUsers = [];
-  merged.videos = merged.videos.map(v => ({ adCount: null, ...v }));
+  merged.videos = merged.videos.map(v => {
+    const out = { adCount: null, refType: 'message_id', refValue: v.messageId || 0, ...v };
+    if (!out.refType) out.refType = out.messageId ? 'message_id' : 'none';
+    if (!out.refValue && out.messageId) out.refValue = out.messageId;
+    return out;
+  });
   return merged;
 }
 
@@ -279,11 +325,11 @@ function uid(p) { return (p || 'id') + '_' + Date.now().toString(36) + Math.rand
 
 function generateSecureToken() {
   if (window.crypto && window.crypto.getRandomValues) {
-    const arr = new Uint8Array(24);
+    const arr = new Uint8Array(16);
     window.crypto.getRandomValues(arr);
     return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
   }
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12);
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 }
 
 function toast(msg, type) {
@@ -316,15 +362,6 @@ function attachRipple() {
     target.appendChild(span);
     setTimeout(() => span.remove(), 520);
   }, true);
-}
-
-function parseMessageId(raw) {
-  if (!raw) return 0;
-  const s = String(raw).trim();
-  const m = s.match(/\/(\d+)\/?$/);
-  if (m) return parseInt(m[1], 10);
-  if (/^\d+$/.test(s)) return parseInt(s, 10);
-  return 0;
 }
 
 function getVideoAdCount(v) {
@@ -375,23 +412,60 @@ async function uploadThumbnailToImgBB(file, apiKey, apiUrl) {
 }
 
 /* ================================================================
-   TOKEN CREATION
+   TOKEN CREATION (Firestore first, bot server registration fallback)
    ================================================================ */
-async function createUnlockToken(userId, videoId, messageId) {
+async function createUnlockToken(userId, video) {
   const token = generateSecureToken();
+  const refType = (video && video.refType) || 'message_id';
+  const refValue = (video && video.refValue) || (video && video.messageId) || 0;
+  const videoId = (video && video.id) || '';
+  const expiresMs = Date.now() + TOKEN_TTL_MS;
+
+  let stored = false;
+
+  // 1) Try Firestore first
   if (fbReady) {
     try {
       await fbDb.collection('unlock_tokens').doc(token).set({
         user_id: userId,
         video_id: videoId,
-        message_id: messageId || 0,
+        ref_type: refType,
+        ref_value: refValue,
+        message_id: refType === 'message_id' ? refValue : 0,
+        file_id: refType === 'file_id' ? refValue : '',
         used: false,
         created_at: firebase.firestore.FieldValue.serverTimestamp(),
-        expires_at: firebase.firestore.Timestamp.fromDate(new Date(Date.now() + TOKEN_TTL_MS))
+        expires_at: firebase.firestore.Timestamp.fromDate(new Date(expiresMs))
       });
-    } catch (e) { console.warn('Token create failed', e); }
+      stored = true;
+    } catch (e) {
+      console.warn('Firestore token create failed', e);
+    }
   }
-  return token;
+
+  // 2) Try bot server registration endpoint if Firestore unavailable
+  if (!stored) {
+    try {
+      const res = await fetch(BOT_SERVER_URL + '/register-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: token,
+          user_id: Number(userId),
+          video_id: videoId,
+          ref_type: refType,
+          ref_value: refValue,
+          expires_at_ms: expiresMs
+        })
+      });
+      if (res.ok) stored = true;
+      else console.warn('Bot /register-token responded', res.status);
+    } catch (e) {
+      console.warn('Bot /register-token failed', e);
+    }
+  }
+
+  return { token: token, stored: stored, refType: refType, refValue: refValue, videoId: videoId };
 }
 
 /* ================================================================
@@ -562,7 +636,7 @@ function renderChannel() {
 }
 
 /* ================================================================
-   SETTINGS — Admin banner always on top when ID matches
+   SETTINGS
    ================================================================ */
 function renderSettings() {
   refreshUserFromTelegram();
@@ -890,10 +964,47 @@ function incrementAnalytics(kind) {
    DELIVER VIDEO
    ================================================================ */
 async function deliverVideoToBot2(video) {
-  const msgId = Number(video.messageId) || parseMessageId(video.messageLink) || 0;
-  const token = await createUnlockToken(currentUser.id, video.id, msgId);
-  const link = `https://t.me/${BOT_2_USERNAME}?start=${token}`;
+  if (!video) return toast('ভিডিও পাওয়া যায়নি', 'error');
+
+  // Resolve ref
+  let refType = video.refType;
+  let refValue = video.refValue;
+  if (!refType || !refValue) {
+    if (video.messageId) { refType = 'message_id'; refValue = video.messageId; }
+    else if (video.fileId) { refType = 'file_id'; refValue = video.fileId; }
+  }
+  if (!refType || !refValue) {
+    return toast('ভিডিও রেফারেন্স সেট করা নেই — এডমিন ঠিক করুন', 'error');
+  }
+
+  const result = await createUnlockToken(currentUser.id, {
+    id: video.id,
+    refType: refType,
+    refValue: refValue,
+    messageId: video.messageId
+  });
+
+  let startPayload = '';
+
+  if (result.stored) {
+    // Preferred path: short token, metadata stored server-side or Firestore
+    startPayload = result.token;
+  } else if (refType === 'message_id' && Number(refValue) > 0) {
+    // Fallback: compact inline payload (fits within 64-char deep-link limit for short video ids)
+    const shortVid = String(video.id || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 10);
+    const compact = `vid_${refValue}_${shortVid}_${result.token.slice(0, 16)}`;
+    if (compact.length <= 64) {
+      startPayload = compact;
+    }
+  }
+
+  if (!startPayload) {
+    return toast('টোকেন রেজিস্ট্রেশন ব্যর্থ — Firestore বা বট সার্ভার চালু করুন', 'error');
+  }
+
+  const link = `https://t.me/${BOT_2_USERNAME}?start=${encodeURIComponent(startPayload)}`;
   openTelegramLink(link);
+
   video.views = (Number(video.views) || 0) + 1;
   incrementAnalytics('view');
   toast('বট ২-এ পাঠানো হচ্ছে…', 'success');
@@ -1060,7 +1171,7 @@ function adminAdControl() {
 }
 
 /* ================================================================
-   ADMIN — UPLOAD (with ImgBB gallery upload + per-video ad count)
+   ADMIN — UPLOAD (multi-format video ref + ImgBB)
    ================================================================ */
 function adminUpload() {
   const catOpts = state.categories.filter(c => c !== 'সব').map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
@@ -1094,8 +1205,9 @@ function adminUpload() {
       </div>
 
       <div class="admin-field">
-        <label>প্রাইভেট চ্যানেল মেসেজ লিংক / ID</label>
-        <input type="text" id="upMsg" placeholder="https://t.me/.../123 অথবা 123">
+        <label>প্রাইভেট চ্যানেল মেসেজ লিংক / ID / file_id</label>
+        <input type="text" id="upMsg" placeholder="BAAC... অথবা https://t.me/c/.../123 অথবা 123 অথবা -1005626980298:123">
+        <p class="modal-sub" style="margin:6px 0 0;font-size:11px;line-height:1.4;">সমর্থিত: BAAC... ফাইল আইডি · t.me লিংক · শুধু message ID · channel_id:message_id</p>
       </div>
 
       <div class="admin-field">
@@ -1162,7 +1274,7 @@ function adminUpload() {
         status.className = 'admin-status-msg';
         const title = root.querySelector('#upTitle').value.trim();
         const thumb = root.querySelector('#upThumb').value.trim();
-        const msg = root.querySelector('#upMsg').value.trim();
+        const msgRaw = root.querySelector('#upMsg').value.trim();
         const cat = root.querySelector('#upCat').value;
         const views = parseInt(root.querySelector('#upViews').value, 10) || 0;
         const adCountRaw = root.querySelector('#upAdCount').value.trim();
@@ -1170,11 +1282,28 @@ function adminUpload() {
         const adCount = (Number.isFinite(adCountParsed) && adCountParsed > 0) ? adCountParsed : null;
 
         if (!title) { status.textContent = 'শিরোনাম প্রয়োজন'; status.classList.add('err'); return; }
-        if (!msg) { status.textContent = 'মেসেজ লিংক / ID প্রয়োজন'; status.classList.add('err'); return; }
-        const messageId = parseMessageId(msg);
-        if (!messageId) { status.textContent = 'সঠিক মেসেজ লিংক বা ID দিন'; status.classList.add('err'); return; }
+        if (!msgRaw) { status.textContent = 'মেসেজ লিংক / ID / file_id প্রয়োজন'; status.classList.add('err'); return; }
 
-        const newV = { id: uid('v'), title, thumbnail: thumb, messageLink: msg, messageId, category: cat, views, adCount };
+        const parsed = parseVideoRef(msgRaw);
+        if (parsed.type === 'none' || parsed.type === 'invalid') {
+          status.textContent = 'অবৈধ ভিডিও রেফারেন্স — BAAC file_id, t.me লিংক, message ID, বা channel:msg দিন';
+          status.classList.add('err');
+          return;
+        }
+
+        const newV = {
+          id: uid('v'),
+          title,
+          thumbnail: thumb,
+          refType: parsed.type,
+          refValue: parsed.value,
+          messageLink: msgRaw,
+          messageId: parsed.type === 'message_id' ? parsed.value : null,
+          fileId: parsed.type === 'file_id' ? parsed.value : null,
+          category: cat,
+          views,
+          adCount
+        };
         state.videos.unshift(newV);
         saveState();
         status.textContent = 'সফলভাবে আপলোড হয়েছে!'; status.classList.add('ok');
@@ -1283,7 +1412,7 @@ function adminManage() {
   const render = () => state.videos.map(v => `<div class="admin-list-row">
     <div class="row-main">
       <span class="row-title">${esc(v.title)}</span>
-      <span class="row-sub">${esc(v.category)} · 👁 ${formatViews(v.views)} · msgId ${v.messageId || '—'} · ${v.adCount || 'ডিফল্ট'}</span>
+      <span class="row-sub">${esc(v.category)} · 👁 ${formatViews(v.views)} · ${esc(videoRefLabel(v))} · ${v.adCount || 'ডিফল্ট'}</span>
     </div>
     <div class="admin-row-actions"><button class="admin-mini-btn danger" type="button" data-del="${esc(v.id)}">ডিলিট</button></div>
   </div>`).join('') || `<div class="empty-state"><div class="empty-ico">🎬</div><div>কোন ভিডিও নেই</div></div>`;
